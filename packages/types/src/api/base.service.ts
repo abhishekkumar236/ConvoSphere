@@ -6,16 +6,23 @@ import type {
   PgUpdateSetSource,
 } from "drizzle-orm/pg-core";
 import { db } from "db";
+import type { QueryOptions } from "./types.js";
 
 type TableWithId = AnyPgTable & { id: AnyPgColumn };
 
 export abstract class BaseService<Table extends TableWithId> {
   private static readonly MAX_PAGE_SIZE = 100;
+  private static readonly DEFAULT_PAGE_SIZE = 10;
+
   constructor(protected readonly table: Table) {}
 
-  async findMany(page = 1, pageSize = 20): Promise<InferSelectModel<Table>[]> {
-    const limit = Math.min(Math.max(pageSize, 1), BaseService.MAX_PAGE_SIZE);
-    const offset = (Math.max(page, 1) - 1) * limit;
+  async findMany(options: QueryOptions): Promise<InferSelectModel<Table>[]> {
+    const limit = Math.min(
+      Math.max(options.limit ?? BaseService.DEFAULT_PAGE_SIZE, 1),
+      BaseService.MAX_PAGE_SIZE,
+    );
+
+    const offset = Math.max(options.offset ?? 0, 0);
     return this.asRows(
       await db
         .select()
