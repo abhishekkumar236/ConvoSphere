@@ -1,0 +1,104 @@
+name: "vmeet"
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vmeet
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - vmeet
+
+  pgadmin:
+    image: dpage/pgadmin4
+    ports:
+      - "8082:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - vmeet
+
+  # ---------------------------------------------------------------------------------
+  # RabbitMQ: message broker. Apps connect with MQTT over WebSocket; services with
+  # MQTT or AMQP. Settings: rabbitmq/rabbitmq.conf. Plugins: rabbitmq/enabled_plugins.
+  # ---------------------------------------------------------------------------------
+  rabbitmq:
+    # Exact version, so a rebuild never upgrades the broker by surprise. Upgrade on purpose.
+    # "-management" includes the web UI (http://127.0.0.1:15672) and its HTTP API.
+    image: rabbitmq:4.4.1-management
+    container_name: rabbitmq
+    # RabbitMQ keeps its data under its node name, rabbit@<hostname>. A fixed hostname lets a
+    # re-created container (new image, changed config) find the same data in the volume.
+    hostname: rabbitmq
+    # Start again after a crash or a machine reboot.
+    restart: always
+    environment:
+      # The one internal user: you (management UI) and every service log in with it.
+      # Created instead of the default guest/guest, on the FIRST start only (empty volume).
+      # Values come from infra/.env; ":?" stops `docker compose up` with this message if a
+      # value is missing, instead of starting with an empty password.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_ADMIN_USER:?set RABBITMQ_ADMIN_USER in infra/.env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_ADMIN_PASSWORD:?set RABBITMQ_ADMIN_PASSWORD in infra/.env}
+    ports:
+      # MQTT over WebSocket, for browsers and mobile apps: ws://<host>:15675/ws
+      - "15675:15675"
+      # MQTT over TCP, for services and test tools (Postman, mosquitto_sub).
+      - "1883:1883"
+      # AMQP, for services that use the AMQP protocol.
+      - "5672:5672"
+      # Management UI and API: bound to 127.0.0.1, so only this machine can open it,
+      # never another computer on the network or the internet.
+      - "127.0.0.1:15672:15672"
+    volumes:
+      # Messages, queues, users and permissions survive container re-creation.
+      - rabbitmq_data:/var/lib/rabbitmq
+      # Read-only (:ro): the container can't change its own configuration.
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    # Hard memory cap. rabbitmq.conf stops publishers at 600 MB (about 60% of this), so
+    # RabbitMQ slows producers down instead of being killed. Change both together.
+    mem_limit: 1g
+    ulimits:
+      # Every connection (each app's WebSocket) uses a file descriptor. The usual default
+      # (1024) would cap the broker at about a thousand connected devices.
+      nofile:
+        soft: 65536
+        hard: 65536
+    # On `docker compose down`/restart, give RabbitMQ time to close connections and write
+    # queues to disk before Docker force-kills it (the default is only 10 s).
+    stop_grace_period: 60s
+    healthcheck:
+      # Healthy only when every listener (AMQP, MQTT, WebSocket, management) accepts
+      # connections, not just when the process is running. Services can wait for this with
+      # depends_on: { rabbitmq: { condition: service_healthy } }.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      # RabbitMQ needs about 10-20 s to boot; failures during this time don't count.
+      start_period: 30s
+    networks:
+      - vmeet
+
+volumes:
+  postgres_data:
+  pgadmin-data:
+  # RabbitMQ's data directory (see the rabbitmq service).
+  rabbitmq_data:
+
+networks:
+  vmeet:
+    # Without "name", Docker calls this network "vmeet_vmeet" (project name + key).
+    # With it, the network is exactly "vmeet", so services in other compose files can join
+    # it as an external network named vmeet, and reach "rabbitmq" and "postgres" by name.
+    name: vmeet

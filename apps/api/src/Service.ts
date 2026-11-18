@@ -11,6 +11,7 @@ export class Service {
   }
 
   private setupMiddlewares(): void {
+    this.app.use(express.urlencoded({ extended: false }));
     this.app.use(express.json());
     this.app.use(cors());
   }

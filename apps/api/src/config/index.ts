@@ -1,8 +1,8 @@
 import "dotenv/config";
-import { AppError, ConfigSchema, type Config } from "types";
+import { ApiConfigSchema, type ApiConfig } from "types";
 
-function loadConfig(): Config {
-  const config = ConfigSchema.safeParse(process.env);
+function loadConfig(): ApiConfig {
+  const config = ApiConfigSchema.safeParse(process.env);
   if (!config.success) {
     throw new Error("Config not found");
   }

@@ -1,0 +1,3 @@
+# Files mounted into Linux containers must keep Linux line endings (LF). On Windows, Git can
+# convert them to CRLF on checkout, and then RabbitMQ misreads its config files.
+rabbitmq/* text eol=lf

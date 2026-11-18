@@ -9,7 +9,9 @@ export const CreateUserSchema = z.object({
     .max(24, "Maximum password length in 24 characters"),
 });
 
-export const UserLoginSchema = CreateUserSchema.omit({
+// Log in with email + password (matches UserLoginRequest).
+export const UserLoginSchema = CreateUserSchema.pick({
+  email: true,
   password: true,
 });
 

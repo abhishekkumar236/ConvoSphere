@@ -1,0 +1,64 @@
+# One entry point for the whole stack: infra (Postgres, pgAdmin, RabbitMQ) + our services.
+#   docker compose up -d --build          start everything, rebuilding images that changed
+#   docker compose up -d --build api      only the api (plus what it depends on)
+#   docker compose logs -f api            follow the api's logs
+#   docker compose down                   stop everything (data in volumes is kept)
+
+# Same project name as infra/docker-compose.infra.yml, so the existing containers, volumes
+# (vmeet_postgres_data ...) and the "vmeet" network are reused, not duplicated.
+name: vmeet
+
+include:
+  # Postgres, pgAdmin and RabbitMQ with their own settings. Paths and infra/.env inside it
+  # are resolved relative to the infra folder.
+  - infra/docker-compose.infra.yml
+
+services:
+  api:
+    build:
+      # The repo root: the api needs packages/db and packages/types too.
+      context: .
+      # Each service keeps its own Dockerfile next to its code.
+      dockerfile: apps/api/Dockerfile
+    # Name of the built image, so it shows up as vmeet/api in `docker images`.
+    image: vmeet/api
+    # Fixed name. RabbitMQ calls the api at http://api:9090 to check app logins
+    # (infra/rabbitmq/rabbitmq.conf), so the name and port must stay "api" and 9090.
+    container_name: api
+    # Start again after a crash or a reboot.
+    restart: always
+    # Runs a tiny init process as PID 1 that passes stop signals (docker stop, Ctrl+C) to Node,
+    # so the api stops at once instead of being force-killed after 10 s.
+    init: true
+    # Secrets (ACCESS_TOKEN_SECRET ...) are read at run time, never baked into the image.
+    env_file:
+      - apps/api/.env
+    environment:
+      # Inside Docker the database is the "postgres" container, not localhost.
+      # The user, password and database match infra/docker-compose.infra.yml.
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/vmeet
+    ports:
+      # Reachable from your machine at http://localhost:9090/api/v1 (e.g. Postman).
+      - "9090:9090"
+    depends_on:
+      # Start Postgres first. (It has no healthcheck, so "started" is the best we can wait for.)
+      postgres:
+        condition: service_started
+    healthcheck:
+      # Healthy once something accepts connections on port 9090. The api has no /health
+      # route yet; a plain TCP check needs no code change.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('net').connect(9090,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      # The network defined in infra/docker-compose.infra.yml: reaches postgres and rabbitmq
+      # by name, and RabbitMQ reaches this container as "api".
+      - vmeet

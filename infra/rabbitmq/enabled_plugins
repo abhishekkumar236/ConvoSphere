@@ -1,0 +1,14 @@
+%% Plugins RabbitMQ starts with. Mounted read-only at /etc/rabbitmq/enabled_plugins.
+%% This file is an Erlang term: comments start with %, and the list must end with "].".
+[
+  %% Web UI (http://127.0.0.1:15672) and its HTTP API.
+  rabbitmq_management,
+  %% MQTT protocol (port 1883). Apps and services talk MQTT.
+  rabbitmq_mqtt,
+  %% MQTT over WebSocket (port 15675, path /ws), for browsers and mobile apps.
+  rabbitmq_web_mqtt,
+  %% Asks our api over HTTP whether an app may log in, subscribe or publish.
+  rabbitmq_auth_backend_http,
+  %% Caches those answers, so the api isn't called on every publish.
+  rabbitmq_auth_backend_cache
+].

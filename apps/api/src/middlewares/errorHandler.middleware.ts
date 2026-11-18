@@ -7,7 +7,12 @@ const PG_UNIQUE_VIOLATION = "23505";
 /** Drizzle wraps the Postgres error and keeps the original in `cause`. */
 const isUniqueViolation = (err: Error): boolean => {
   const cause = err.cause;
-  return typeof cause === "object" && cause !== null && "code" in cause && cause.code === PG_UNIQUE_VIOLATION;
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    cause.code === PG_UNIQUE_VIOLATION
+  );
 };
 
 export const errorHandler = (
