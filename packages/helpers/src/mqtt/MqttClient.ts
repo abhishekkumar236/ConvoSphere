@@ -7,7 +7,7 @@ import mqtt, {
 
 import { EventEmitter } from "node:events";
 
-export interface ConnectionOptions extends IClientOptions {
+export interface MqttConnectionOptions extends IClientOptions {
   clientId: string;
   username: string;
   password: string;
@@ -15,9 +15,10 @@ export interface ConnectionOptions extends IClientOptions {
 
 export class MqttClientWrapper extends EventEmitter {
   private static instance: MqttClientWrapper | null = null;
+
   private readonly client: MqttClient;
 
-  private constructor(url: string, options: ConnectionOptions) {
+  private constructor(url: string, options: MqttConnectionOptions) {
     super();
 
     this.client = mqtt.connect(url, {
@@ -31,12 +32,24 @@ export class MqttClientWrapper extends EventEmitter {
     this.registerEvents();
   }
 
-  public static getInstance(
+  // Initialize MQTT only once
+  public static initialize(
     url: string,
-    options: ConnectionOptions,
+    options: MqttConnectionOptions,
   ): MqttClientWrapper {
     if (!MqttClientWrapper.instance) {
       MqttClientWrapper.instance = new MqttClientWrapper(url, options);
+    }
+
+    return MqttClientWrapper.instance;
+  }
+
+  // Access existing MQTT instance anywhere
+  public static getInstance(): MqttClientWrapper {
+    if (!MqttClientWrapper.instance) {
+      throw new Error(
+        "MQTT is not initialized. Call MqttClientWrapper.initialize() first.",
+      );
     }
 
     return MqttClientWrapper.instance;
@@ -72,6 +85,7 @@ export class MqttClientWrapper extends EventEmitter {
     return this.client;
   }
 
+  // PUBLISH
   public async publish(
     topic: string,
     message: string | Buffer,
@@ -89,6 +103,7 @@ export class MqttClientWrapper extends EventEmitter {
     });
   }
 
+  // SUBSCRIBE
   public async subscribe(
     topic: string,
     options?: IClientSubscribeOptions,
@@ -105,6 +120,21 @@ export class MqttClientWrapper extends EventEmitter {
     });
   }
 
+  // UNSUBSCRIBE
+  public async unsubscribe(topic: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      this.client.unsubscribe(topic, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+
+  // DISCONNECT
   public async disconnect(): Promise<void> {
     if (!this.client.connected && !this.client.reconnecting) {
       return;

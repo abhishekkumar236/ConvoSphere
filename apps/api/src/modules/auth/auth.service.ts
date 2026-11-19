@@ -17,7 +17,10 @@ export class AuthService {
    * Compared against when the email is unknown, so "no such user" takes as long as
    * "wrong password" and response times don't reveal which emails are registered.
    */
-  private readonly dummyHash = bcrypt.hashSync("dummy-password-for-timing", BCRYPT_ROUNDS);
+  private readonly dummyHash = bcrypt.hashSync(
+    "dummy-password-for-timing",
+    BCRYPT_ROUNDS,
+  );
 
   constructor(userService: UserService, jwtService: JWTService) {
     this.userService = userService;

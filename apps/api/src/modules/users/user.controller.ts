@@ -19,7 +19,9 @@ export class UserController extends BaseController {
     try {
       const query = PaginationQuerySchema.safeParse(req.query);
       if (!query.success) {
-        throw new BadRequest("page must be 1 or more, pageSize between 1 and 100");
+        throw new BadRequest(
+          "page must be 1 or more, pageSize between 1 and 100",
+        );
       }
 
       // → { items: [...], meta: { page, pageSize, totalItems, totalPages } }
@@ -101,6 +103,22 @@ export class UserController extends BaseController {
       return this.sendResponse(res, {
         message: "Resource deleted successfully",
       });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  handshake = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = Number(req.params.id);
+
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new BadRequest("Invalid resource ID");
+      }
+
+      const result = await this.userService.handshake(id);
+
+      return this.sendResponse(res, result);
     } catch (error) {
       next(error);
     }

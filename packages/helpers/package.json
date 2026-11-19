@@ -14,9 +14,11 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "ioredis": "^6.0.0",
     "mqtt": "^5.16.1"
   },
   "devDependencies": {
+    "@types/ioredis": "^4.28.10",
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
   }

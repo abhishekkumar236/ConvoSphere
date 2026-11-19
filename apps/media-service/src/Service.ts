@@ -6,7 +6,7 @@ export class Service {
   private shuttingDown = false;
 
   constructor() {
-    this.mqtt = MqttClientWrapper.getInstance(config.MQTT_URL, {
+    this.mqtt = MqttClientWrapper.initialize(config.MQTT_URL, {
       username: config.MQTT_USERNAME,
       password: config.MQTT_PASSWORD,
       clientId: config.MQTT_CLIENT_ID,

@@ -14,12 +14,14 @@ export const ConfigSchema = z.object({
   MQTT_CONNECTION_TIMEOUT: z.number(),
   MQTT_CLEAN_SESSION: z.boolean(),
   MQTT_CLIENT_ID: z.string().min(1, "MQTT_CLIENT_ID is required"),
+  REDIS_URL: z.string().min(1, "REDIS_URL is required"),
 });
 
 export const ApiConfigSchema = ConfigSchema.pick({
   ACCESS_TOKEN_EXPIRY: true,
   ACCESS_TOKEN_SECRET: true,
   SERVICE_NAME: true,
+  REDIS_URL: true,
 });
 
 export type ApiConfig = z.infer<typeof ApiConfigSchema>;
@@ -33,6 +35,7 @@ export const MediaServiceConfigSchema = ConfigSchema.pick({
   MQTT_CONNECTION_TIMEOUT: true,
   MQTT_CLEAN_SESSION: true,
   MQTT_CLIENT_ID: true,
+  REDIS_URL: true,
 });
 
 export type MediaServiceConfig = z.infer<typeof MediaServiceConfigSchema>;

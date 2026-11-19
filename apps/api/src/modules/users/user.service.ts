@@ -1,8 +1,10 @@
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "db";
-import { BaseService, type PublicUser, type User } from "types";
+import { BaseService, Forbidden, type PublicUser, type User } from "types";
+import { RedisClient } from "helpers";
 
 export class UserService extends BaseService<typeof usersTable> {
+  private redis: RedisClient = RedisClient.getInstance();
   constructor() {
     super(usersTable);
   }
@@ -15,6 +17,18 @@ export class UserService extends BaseService<typeof usersTable> {
       .where(eq(this.table.email, email))
       .limit(1);
     return user ?? null;
+  }
+
+  async handshake(id: number) {
+    const user = await this.findById(id);
+    if (!user) {
+      throw new Forbidden("User not found");
+    }
+
+    await this.redis.set(`user:${id}`, this.toPublic(user));
+    return {
+      mqttUsername: String(id),
+    };
   }
 
   /**
