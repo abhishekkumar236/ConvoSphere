@@ -4,7 +4,7 @@ import { timestamps } from "../helper/common.schema.js";
 export const roomTable = pgTable("rooms", {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   title: varchar({ length: 255 }).notNull().unique(),
-  description: varchar({ length: 255 }).notNull().unique(),
+  description: varchar({ length: 255 }).notNull(),
   image: varchar({ length: 500 }),
   ...timestamps,
 });

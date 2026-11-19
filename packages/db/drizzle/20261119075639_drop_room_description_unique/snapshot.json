@@ -1,0 +1,40 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "80f448f4-8ee5-49b0-8d9d-92cedebc19ee",
+  "prevIds": [
+    "3ae86203-0f8c-4da0-a461-9a5a6c5cf003"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_unique",
+      "statementTarget": [
+        "table",
+        "public",
+        "rooms"
+      ],
+      "writes": [
+        "s|uq|public.rooms.rooms_description_key",
+        "n|uq|public.rooms.rooms_description_key",
+        "e|uq|public.rooms.rooms_description_key",
+        "n|con|public.rooms.rooms_description_key",
+        "n|rel|public.rooms_description_key"
+      ],
+      "reads": [
+        "n|tbl|public.rooms",
+        "n|sch|public",
+        "e|col|public.rooms.description"
+      ],
+      "sharedWrites": [
+        "e|uniqueness|public.rooms.description"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "drop",
+      "key": "uniques\u0000[\"public\",\"rooms\",\"rooms_description_key\"]"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { BaseController } from "types";
+import { BaseController } from "../../shared/base.controller.js";
 import { AuthService } from "./auth.service.js";
 import type { NextFunction, Request, Response } from "express";
 

@@ -14,6 +14,9 @@ export class Service {
       reconnectPeriod: config.MQTT_RECONNECT_PERIOD,
       connectTimeout: config.MQTT_CONNECTION_TIMEOUT,
       keepalive: 60,
+      // Subscriptions are made in onConnectHandler on every connect (first and reconnects);
+      // mqtt.js re-sending them too would subscribe twice.
+      resubscribe: false,
     });
 
     this.registerListeners();
@@ -21,14 +24,11 @@ export class Service {
   }
 
   /**
-   * Initialize the MQTT service.
+   * Starts the service. Subscribing waits for the broker: it happens in onConnectHandler,
+   * once connected, and again after every reconnect.
    */
   public async init(): Promise<void> {
-    console.info("[SERVICE] Starting MQTT service...");
-
-    await this.registerMqttSubscriptions();
-
-    console.info("[SERVICE] MQTT service initialized");
+    console.info("[SERVICE] Starting MQTT service, waiting for the broker...");
   }
 
   private registerListeners(): void {

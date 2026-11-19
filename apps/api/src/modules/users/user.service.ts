@@ -1,12 +1,20 @@
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "db";
-import { BaseService, Forbidden, type PublicUser, type User } from "types";
+import { Forbidden, type PublicUser, type User } from "types";
+import { BaseService } from "../../shared/base.service.js";
 import { RedisClient } from "helpers";
 
 export class UserService extends BaseService<typeof usersTable> {
-  private redis: RedisClient = RedisClient.getInstance();
   constructor() {
     super(usersTable);
+  }
+
+  /**
+   * Looked up on first use, not in the constructor: route files create this service when they
+   * are imported, which is before Service has called RedisClient.initialize().
+   */
+  private get redis(): RedisClient {
+    return RedisClient.getInstance();
   }
 
   /** Returns null when no user has this email. Uses the unique index on email. */

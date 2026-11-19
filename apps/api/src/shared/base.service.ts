@@ -15,7 +15,8 @@ import type {
   PgUpdateSetSource,
 } from "drizzle-orm/pg-core";
 import { db } from "db";
-import type { FindManyOptions, Paginated } from "./types.js";
+import type { Paginated } from "types";
+import type { FindManyOptions } from "./types.js";
 
 type TableWithId = AnyPgTable & { id: AnyPgColumn };
 
@@ -88,15 +89,22 @@ export abstract class BaseService<Table extends TableWithId> {
     return row;
   }
 
+  /**
+   * Changes only the given fields. undefined = leave as is (what zod's .partial() produces), so
+   * { title: "New", image: undefined } changes the title only. Nothing to change → the row as is.
+   */
   async update(
     id: number,
-    data: Partial<InferInsertModel<Table>>,
+    data: { [Column in keyof InferInsertModel<Table>]?: InferInsertModel<Table>[Column] | undefined },
   ): Promise<InferSelectModel<Table> | null> {
-    if (Object.keys(data).length === 0) return this.findById(id);
+    const changes = Object.fromEntries(
+      Object.entries(data).filter(([, value]) => value !== undefined),
+    );
+    if (Object.keys(changes).length === 0) return this.findById(id);
     const [row] = this.asRows(
       await db
         .update(this.table)
-        .set(data as PgUpdateSetSource<Table>)
+        .set(changes as PgUpdateSetSource<Table>)
         .where(eq(this.table.id, id))
         .returning(),
     );

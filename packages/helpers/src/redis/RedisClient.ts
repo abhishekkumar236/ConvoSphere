@@ -6,6 +6,11 @@ export interface SetOptions {
   PX?: number;
 }
 
+/** Anything with parse(), e.g. a zod schema: get("user:7", PublicUserSchema). */
+export interface Parser<T> {
+  parse(value: unknown): T;
+}
+
 export class RedisClient extends EventEmitter {
   private static instance: RedisClient;
   private client: Redis;
@@ -56,14 +61,14 @@ export class RedisClient extends EventEmitter {
     return RedisClient.instance;
   }
 
-  // SET
+  // SET. Every value is stored as JSON, strings too ("123" is stored as "\"123\""), so get()
+  // returns exactly the type that was stored: set("otp", "123") → get → "123", not 123.
   public async set(
     key: string,
     value: unknown,
     options?: SetOptions,
   ): Promise<"OK" | null> {
-    const serializedValue =
-      typeof value === "string" ? value : JSON.stringify(value);
+    const serializedValue = JSON.stringify(value);
 
     if (options?.EX !== undefined) {
       return this.client.set(key, serializedValue, "EX", options.EX);
@@ -76,23 +81,19 @@ export class RedisClient extends EventEmitter {
     return this.client.set(key, serializedValue);
   }
 
-  // GET
-  public async get<T = string>(key: string): Promise<T | null> {
+  // GET. The value is checked with `schema`, not just cast, so a wrong shape throws here
+  // instead of surfacing later. null when the key doesn't exist.
+  public async get<T>(key: string, schema: Parser<T>): Promise<T | null> {
     const value = await this.client.get(key);
 
     if (value === null) return null;
 
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return value as T;
-    }
+    return schema.parse(JSON.parse(value));
   }
 
   // UPDATE (atomic, preserves TTL)
   public async update(key: string, value: unknown): Promise<"OK" | null> {
-    const serializedValue =
-      typeof value === "string" ? value : JSON.stringify(value);
+    const serializedValue = JSON.stringify(value);
 
     const result = await this.client.eval(
       `

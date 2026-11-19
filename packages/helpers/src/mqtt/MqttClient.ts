@@ -32,15 +32,19 @@ export class MqttClientWrapper extends EventEmitter {
     this.registerEvents();
   }
 
-  // Initialize MQTT only once
+  // Initialize MQTT only once. A second call throws: its url/options would otherwise be
+  // silently ignored. Use getInstance() to reach the existing client.
   public static initialize(
     url: string,
     options: MqttConnectionOptions,
   ): MqttClientWrapper {
-    if (!MqttClientWrapper.instance) {
-      MqttClientWrapper.instance = new MqttClientWrapper(url, options);
+    if (MqttClientWrapper.instance) {
+      throw new Error(
+        "MQTT is already initialized. Use MqttClientWrapper.getInstance().",
+      );
     }
 
+    MqttClientWrapper.instance = new MqttClientWrapper(url, options);
     return MqttClientWrapper.instance;
   }
 
@@ -134,12 +138,9 @@ export class MqttClientWrapper extends EventEmitter {
     });
   }
 
-  // DISCONNECT
+  // DISCONNECT. Always calls end(), also while offline between reconnect attempts: end() is
+  // what stops the reconnect timer, which otherwise keeps the process alive after shutdown.
   public async disconnect(): Promise<void> {
-    if (!this.client.connected && !this.client.reconnecting) {
-      return;
-    }
-
     await new Promise<void>((resolve, reject) => {
       this.client.end(false, {}, (error) => {
         if (error) {

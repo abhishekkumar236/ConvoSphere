@@ -11,12 +11,7 @@ const router = Router();
 const authService = new AuthService(new UserService(), new JWTService());
 const authController = new AuthController(authService);
 
-router.post(
-  "/auth/signup",
-  validate(CreateUserSchema),
-  authController.register,
-);
-
+router.post("/auth/signup", validate(CreateUserSchema), authController.register);
 router.post("/auth/login", validate(UserLoginSchema), authController.login);
 
 export default router;

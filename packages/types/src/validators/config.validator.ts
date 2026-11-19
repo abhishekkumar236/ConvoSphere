@@ -10,9 +10,11 @@ export const ConfigSchema = z.object({
   MQTT_USERNAME: z.string().min(1, "MQTT_USERNAME is required"),
   MQTT_PASSWORD: z.string().min(1, "MQTT_PASSWORD is required"),
   SERVICE_NAME: z.string().min(1, "SERVICE_NAME is required"),
-  MQTT_RECONNECT_PERIOD: z.number(),
-  MQTT_CONNECTION_TIMEOUT: z.number(),
-  MQTT_CLEAN_SESSION: z.boolean(),
+  // Env values are always strings: "3000" → 3000. stringbool reads "true"/"false" (also 1/0,
+  // yes/no); z.coerce.boolean() would turn "false" into true.
+  MQTT_RECONNECT_PERIOD: z.coerce.number().int().min(0),
+  MQTT_CONNECTION_TIMEOUT: z.coerce.number().int().min(1),
+  MQTT_CLEAN_SESSION: z.stringbool(),
   MQTT_CLIENT_ID: z.string().min(1, "MQTT_CLIENT_ID is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
 });
@@ -35,7 +37,6 @@ export const MediaServiceConfigSchema = ConfigSchema.pick({
   MQTT_CONNECTION_TIMEOUT: true,
   MQTT_CLEAN_SESSION: true,
   MQTT_CLIENT_ID: true,
-  REDIS_URL: true,
 });
 
 export type MediaServiceConfig = z.infer<typeof MediaServiceConfigSchema>;

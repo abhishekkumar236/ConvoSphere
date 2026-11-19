@@ -1,10 +1,6 @@
-import {
-  BadRequest,
-  BaseController,
-  NotFound,
-  PaginationQuerySchema,
-} from "types";
+import { NotFound } from "types";
 import { UserService } from "./user.service.js";
+import { BaseController } from "../../shared/base.controller.js";
 import type { Request, Response, NextFunction } from "express";
 
 export class UserController extends BaseController {
@@ -15,35 +11,9 @@ export class UserController extends BaseController {
     this.userService = userService;
   }
 
-  findMany = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const query = PaginationQuerySchema.safeParse(req.query);
-      if (!query.success) {
-        throw new BadRequest(
-          "page must be 1 or more, pageSize between 1 and 100",
-        );
-      }
-
-      // → { items: [...], meta: { page, pageSize, totalItems, totalPages } }
-      const page = await this.userService.findMany(query.data);
-
-      return this.sendResponse(res, {
-        items: page.items.map((user) => this.userService.toPublic(user)),
-        meta: page.meta,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
   findById = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = Number(req.params.id);
-
-      if (!Number.isInteger(id) || id <= 0) {
-        throw new BadRequest("Invalid resource ID");
-      }
-
+      const id = this.ownAccountId(req);
       const data = await this.userService.findById(id);
 
       if (!data) {
@@ -56,24 +26,9 @@ export class UserController extends BaseController {
     }
   };
 
-  create = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const data = await this.userService.create(req.body);
-
-      return this.sendResponse(res, this.userService.toPublic(data), 201);
-    } catch (error) {
-      next(error);
-    }
-  };
-
   update = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = Number(req.params.id);
-
-      if (!Number.isInteger(id) || id <= 0) {
-        throw new BadRequest("Invalid resource ID");
-      }
-
+      const id = this.ownAccountId(req);
       const data = await this.userService.update(id, req.body);
 
       if (!data) {
@@ -88,12 +43,7 @@ export class UserController extends BaseController {
 
   delete = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = Number(req.params.id);
-
-      if (!Number.isInteger(id) || id <= 0) {
-        throw new BadRequest("Invalid resource ID");
-      }
-
+      const id = this.ownAccountId(req);
       const deleted = await this.userService.delete(id);
 
       if (!deleted) {
@@ -108,14 +58,21 @@ export class UserController extends BaseController {
     }
   };
 
+  /**
+   * The :id of a request about the caller's own account. Someone else's id gets 404, the same as
+   * an id that doesn't exist, so the answer doesn't reveal which accounts exist.
+   */
+  private ownAccountId(req: Request): number {
+    const id = this.parseId(req);
+    if (id !== this.currentUser(req).id) {
+      throw new NotFound("Resource not found");
+    }
+    return id;
+  }
+
   handshake = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = Number(req.params.id);
-
-      if (!Number.isInteger(id) || id <= 0) {
-        throw new BadRequest("Invalid resource ID");
-      }
-
+      const id = this.parseId(req);
       const result = await this.userService.handshake(id);
 
       return this.sendResponse(res, result);
