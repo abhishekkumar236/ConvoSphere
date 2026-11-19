@@ -3,16 +3,20 @@ import { AppError, type FieldError } from "types";
 
 /** Postgres "unique_violation", e.g. the username is already taken. */
 const PG_UNIQUE_VIOLATION = "23505";
+/** Postgres "foreign_key_violation": a row still referenced (NO ACTION), or a missing parent. */
+const PG_FOREIGN_KEY_VIOLATION = "23503";
+/** Postgres "restrict_violation": ON DELETE RESTRICT, e.g. deleting a user who hosts a room. */
+const PG_RESTRICT_VIOLATION = "23001";
 
 /** Drizzle wraps the Postgres error and keeps the original in `cause`. */
-const isUniqueViolation = (err: unknown): boolean => {
+const hasPgCode = (err: unknown, code: string): boolean => {
   if (!(err instanceof Error)) return false;
   const cause = err.cause;
   return (
     typeof cause === "object" &&
     cause !== null &&
     "code" in cause &&
-    cause.code === PG_UNIQUE_VIOLATION
+    cause.code === code
   );
 };
 
@@ -58,8 +62,15 @@ export const errorHandler = (
     return send(res, err.status, err.message, err.details);
   }
 
-  if (isUniqueViolation(err)) {
+  if (hasPgCode(err, PG_UNIQUE_VIOLATION)) {
     return send(res, 409, "A record with this value already exists");
+  }
+
+  if (
+    hasPgCode(err, PG_FOREIGN_KEY_VIOLATION) ||
+    hasPgCode(err, PG_RESTRICT_VIOLATION)
+  ) {
+    return send(res, 409, "This record is still in use by other data");
   }
 
   if (isClientHttpError(err)) {

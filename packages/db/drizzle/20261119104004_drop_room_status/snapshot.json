@@ -1,0 +1,78 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "3e0b0be5-36dd-48a6-a068-38449623f90d",
+  "prevIds": [
+    "f83cc458-dd96-4f0d-8926-b6ecfc28371c"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "rooms",
+        "status"
+      ],
+      "writes": [
+        "s|col|public.rooms.status",
+        "n|col|public.rooms.status",
+        "e|col|public.rooms.status"
+      ],
+      "reads": [
+        "n|tbl|public.rooms",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "drop_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "rooms",
+        "closed_at"
+      ],
+      "writes": [
+        "s|col|public.rooms.closed_at",
+        "n|col|public.rooms.closed_at",
+        "e|col|public.rooms.closed_at"
+      ],
+      "reads": [
+        "n|tbl|public.rooms",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "drop_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "room_status"
+      ],
+      "writes": [
+        "s|enum|public.room_status",
+        "n|enum|public.room_status",
+        "e|enum|public.room_status",
+        "n|type|public.room_status"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "drop",
+      "key": "enums\u0000[\"public\",\"room_status\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"rooms\",\"status\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"rooms\",\"closed_at\"]"
+    }
+  ]
+}
