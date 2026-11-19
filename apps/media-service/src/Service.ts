@@ -3,9 +3,7 @@ import { config } from "./config/index.js";
 
 export class Service {
   private readonly mqtt: MqttClientWrapper;
-
-  private isConnected = false;
-  private isShuttingDown = false;
+  private shuttingDown = false;
 
   constructor() {
     this.mqtt = MqttClientWrapper.getInstance(config.MQTT_URL, {
@@ -19,25 +17,39 @@ export class Service {
     });
 
     this.registerListeners();
+    this.registerShutdownHandlers();
+  }
+
+  /**
+   * Initialize the MQTT service.
+   */
+  public async init(): Promise<void> {
+    console.info("[SERVICE] Starting MQTT service...");
+
+    await this.registerMqttSubscriptions();
+
+    console.info("[SERVICE] MQTT service initialized");
   }
 
   private registerListeners(): void {
     this.mqtt.on("connect", () => {
-      void this.connected();
+      console.info("[MQTT] Connected successfully");
+      void this.onConnectHandler();
+    });
+
+    this.mqtt.on("message", (topic: string, payload: Buffer) => {
+      void this.onMessageHandler(topic, payload);
     });
 
     this.mqtt.on("reconnect", () => {
-      this.isConnected = false;
       console.info("[MQTT] Attempting to reconnect...");
     });
 
     this.mqtt.on("offline", () => {
-      this.isConnected = false;
       console.warn("[MQTT] Broker connection is offline");
     });
 
     this.mqtt.on("close", () => {
-      this.isConnected = false;
       console.warn("[MQTT] Broker connection closed");
     });
 
@@ -46,14 +58,12 @@ export class Service {
     });
   }
 
-  private async connected(): Promise<void> {
-    if (this.isShuttingDown) return;
-
-    this.isConnected = true;
-
-    console.info("[MQTT] Connected successfully");
+  private async onConnectHandler(): Promise<void> {
+    if (this.shuttingDown) return;
 
     try {
+      console.info("[MQTT] Restoring subscriptions...");
+
       await this.initializeMqtt();
 
       console.info("[SERVICE] MQTT initialization completed");
@@ -64,8 +74,6 @@ export class Service {
 
   private async initializeMqtt(): Promise<void> {
     await this.registerMqttSubscriptions();
-
-    // Initialize other MQTT-dependent application components here.
   }
 
   private async registerMqttSubscriptions(): Promise<void> {
@@ -74,16 +82,50 @@ export class Service {
     console.info("[MQTT] Application subscriptions registered");
   }
 
-  public async shutdown(): Promise<void> {
-    if (this.isShuttingDown) return;
+  /**
+   * Handle incoming MQTT messages.
+   */
+  private async onMessageHandler(
+    topic: string,
+    payload: Buffer,
+  ): Promise<void> {
+    try {
+      const message = JSON.parse(payload.toString());
 
-    this.isShuttingDown = true;
-    this.isConnected = false;
+      console.info("[MQTT] Message received:", {
+        topic,
+        message,
+      });
 
-    console.info("[SERVICE] Shutting down services...");
+      // Process your incoming request here.
+      await this.processMessage(topic, message);
+    } catch (error) {
+      console.error("[MQTT] Message processing failed:", error);
+    }
+  }
 
-    await this.mqtt.disconnect();
+  private async processMessage(topic: string, message: unknown): Promise<void> {
+    // Implement your business logic here.
+  }
 
-    console.info("[SERVICE] Services shutdown completed");
+  private registerShutdownHandlers(): void {
+    process.once("SIGINT", () => void this.deinit());
+    process.once("SIGTERM", () => void this.deinit());
+  }
+
+  public async deinit(): Promise<void> {
+    if (this.shuttingDown) return;
+
+    this.shuttingDown = true;
+
+    console.info("[SERVICE] Shutting down...");
+
+    try {
+      await this.mqtt.disconnect();
+      console.info("[SERVICE] Shutdown completed");
+    } catch (error) {
+      console.error("[SERVICE] Shutdown failed:", error);
+      process.exitCode = 1;
+    }
   }
 }

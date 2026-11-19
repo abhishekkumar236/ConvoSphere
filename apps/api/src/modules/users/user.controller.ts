@@ -1,4 +1,9 @@
-import { BadRequest, BaseController, NotFound } from "types";
+import {
+  BadRequest,
+  BaseController,
+  NotFound,
+  PaginationQuerySchema,
+} from "types";
 import { UserService } from "./user.service.js";
 import type { Request, Response, NextFunction } from "express";
 
@@ -12,17 +17,18 @@ export class UserController extends BaseController {
 
   findMany = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const limit = Number(req.query.page) || 1;
-      const offset = Number(req.query.pageSize) || 20;
-      const filter = {};
+      const query = PaginationQuerySchema.safeParse(req.query);
+      if (!query.success) {
+        throw new BadRequest("page must be 1 or more, pageSize between 1 and 100");
+      }
 
-      const data = await this.userService.findMany({
-        limit,
-        offset,
-        filter,
+      // → { items: [...], meta: { page, pageSize, totalItems, totalPages } }
+      const page = await this.userService.findMany(query.data);
+
+      return this.sendResponse(res, {
+        items: page.items.map((user) => this.userService.toPublic(user)),
+        meta: page.meta,
       });
-
-      return this.sendResponse(res, data);
     } catch (error) {
       next(error);
     }
@@ -42,7 +48,7 @@ export class UserController extends BaseController {
         throw new NotFound("Resource not found");
       }
 
-      return this.sendResponse(res, data);
+      return this.sendResponse(res, this.userService.toPublic(data));
     } catch (error) {
       next(error);
     }
@@ -52,7 +58,7 @@ export class UserController extends BaseController {
     try {
       const data = await this.userService.create(req.body);
 
-      return this.sendResponse(res, data, 201);
+      return this.sendResponse(res, this.userService.toPublic(data), 201);
     } catch (error) {
       next(error);
     }
@@ -72,7 +78,7 @@ export class UserController extends BaseController {
         throw new NotFound("Resource not found");
       }
 
-      return this.sendResponse(res, data);
+      return this.sendResponse(res, this.userService.toPublic(data));
     } catch (error) {
       next(error);
     }

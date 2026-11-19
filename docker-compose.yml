@@ -13,7 +13,31 @@ include:
   # are resolved relative to the infra folder.
   - infra/docker-compose.infra.yml
 
+# Shared value, referenced below with *database-url. Inside Docker the database is the
+# "postgres" container, not localhost. User, password and database match the infra file.
+x-database-url: &database-url postgresql://postgres:postgres@postgres:5432/vmeet
+
 services:
+  # One-shot job: applies pending database migrations (packages/db/src/migrate.ts), then exits.
+  # The ONLY thing allowed to change the database structure. Runs on every `docker compose up`;
+  # with nothing pending it just prints "up to date" and exits in about a second.
+  migrate:
+    build:
+      context: .
+      dockerfile: packages/db/Dockerfile
+    image: vmeet/migrate
+    container_name: migrate
+    # A job, not a server: never restart it. A failed run must be looked at, not retried blindly.
+    restart: "no"
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        # Wait until Postgres accepts connections (its healthcheck), not merely until it starts.
+        condition: service_healthy
+    networks:
+      - vmeet
+
   api:
     build:
       # The repo root: the api needs packages/db and packages/types too.
@@ -34,16 +58,19 @@ services:
     env_file:
       - apps/api/.env
     environment:
-      # Inside Docker the database is the "postgres" container, not localhost.
-      # The user, password and database match infra/docker-compose.infra.yml.
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/vmeet
+      # Required by ApiConfigSchema (packages/types/src/validators/config.validator.ts).
+      SERVICE_NAME: api
+      DATABASE_URL: *database-url
     ports:
       # Reachable from your machine at http://localhost:9090/api/v1 (e.g. Postman).
       - "9090:9090"
     depends_on:
-      # Start Postgres first. (It has no healthcheck, so "started" is the best we can wait for.)
       postgres:
-        condition: service_started
+        condition: service_healthy
+      # Start only after the migrations finished with exit code 0. If a migration fails, the
+      # api stays down instead of running against a database it doesn't match.
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       # Healthy once something accepts connections on port 9090. The api has no /health
       # route yet; a plain TCP check needs no code change.

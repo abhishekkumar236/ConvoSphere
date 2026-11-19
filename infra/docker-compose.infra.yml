@@ -13,6 +13,14 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+    healthcheck:
+      # Healthy once Postgres accepts connections to the vmeet database. The migrate job and the
+      # api wait for this, so they never start against a database that is still booting.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vmeet"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       - vmeet
 

@@ -42,9 +42,8 @@ export class AuthService {
       id: user.id,
       email: user.email,
     });
-    const { password, ...rest } = user;
     return {
-      user: rest,
+      user: this.userService.toPublic(user),
       access_token,
     };
   }
@@ -68,10 +67,8 @@ export class AuthService {
       id: user.id,
       email: user.email,
     });
-    const { password, ...rest } = user;
-
     return {
-      user: rest,
+      user: this.userService.toPublic(user),
       access_token,
     };
   }

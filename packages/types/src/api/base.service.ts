@@ -1,4 +1,13 @@
-import { eq, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
+import {
+  and,
+  count,
+  eq,
+  getTableColumns,
+  isNull,
+  type InferInsertModel,
+  type InferSelectModel,
+  type SQL,
+} from "drizzle-orm";
 import type {
   AnyPgColumn,
   AnyPgTable,
@@ -6,7 +15,7 @@ import type {
   PgUpdateSetSource,
 } from "drizzle-orm/pg-core";
 import { db } from "db";
-import type { QueryOptions } from "./types.js";
+import type { FindManyOptions, Paginated } from "./types.js";
 
 type TableWithId = AnyPgTable & { id: AnyPgColumn };
 
@@ -16,21 +25,45 @@ export abstract class BaseService<Table extends TableWithId> {
 
   constructor(protected readonly table: Table) {}
 
-  async findMany(options: QueryOptions): Promise<InferSelectModel<Table>[]> {
-    const limit = Math.min(
-      Math.max(options.limit ?? BaseService.DEFAULT_PAGE_SIZE, 1),
+  /**
+   * One page of rows plus counts. Ordered by id, so pages don't shift between requests.
+   *   await service.findMany({ page: 2, pageSize: 10, filter: { ownerId: 7 } })
+   *   → { items: [...10 rows], meta: { page: 2, pageSize: 10, totalItems: 34, totalPages: 4 } }
+   */
+  async findMany(
+    options: FindManyOptions<InferSelectModel<Table>> = {},
+  ): Promise<Paginated<InferSelectModel<Table>>> {
+    const pageSize = this.clamp(
+      options.pageSize,
+      BaseService.DEFAULT_PAGE_SIZE,
+      1,
       BaseService.MAX_PAGE_SIZE,
     );
+    const page = this.clamp(options.page, 1, 1, Number.MAX_SAFE_INTEGER);
+    const where = this.buildWhere(options);
 
-    const offset = Math.max(options.offset ?? 0, 0);
-    return this.asRows(
-      await db
+    // The page and the total are two queries, run at the same time.
+    const [rows, totals] = await Promise.all([
+      db
         .select()
         .from(this.table)
+        .where(where)
         .orderBy(this.table.id)
-        .limit(limit)
-        .offset(offset),
-    );
+        .limit(pageSize)
+        .offset((page - 1) * pageSize),
+      db.select({ total: count() }).from(this.table).where(where),
+    ]);
+    const totalItems = totals[0]?.total ?? 0;
+
+    return {
+      items: this.asRows(rows),
+      meta: {
+        page,
+        pageSize,
+        totalItems,
+        totalPages: Math.ceil(totalItems / pageSize),
+      },
+    };
   }
 
   async findById(id: number): Promise<InferSelectModel<Table> | null> {
@@ -75,6 +108,34 @@ export abstract class BaseService<Table extends TableWithId> {
       await db.delete(this.table).where(eq(this.table.id, id)).returning(),
     );
     return rows.length > 0;
+  }
+
+  /** filter (column = value, or IS NULL for null) AND where. undefined = no WHERE at all. */
+  private buildWhere(
+    options: FindManyOptions<InferSelectModel<Table>>,
+  ): SQL | undefined {
+    const columns: Record<string, AnyPgColumn> = getTableColumns(this.table);
+    const conditions: (SQL | undefined)[] = [];
+    for (const [key, value] of Object.entries(options.filter ?? {})) {
+      if (value === undefined) continue;
+      const column = columns[key];
+      // Only possible when the type check is bypassed (e.g. an object built from a request).
+      if (!column) throw new Error(`Unknown column "${key}" in filter`);
+      conditions.push(value === null ? isNull(column) : eq(column, value));
+    }
+    if (options.where) conditions.push(options.where);
+    return and(...conditions);
+  }
+
+  /** Whole number between min and max. Missing or not a number (undefined, NaN) → fallback. */
+  private clamp(
+    value: number | undefined,
+    fallback: number,
+    min: number,
+    max: number,
+  ): number {
+    if (value === undefined || !Number.isFinite(value)) return fallback;
+    return Math.min(Math.max(Math.trunc(value), min), max);
   }
 
   private asRows(result: unknown): InferSelectModel<Table>[] {
