@@ -1,8 +1,8 @@
 import {
   Unauthorized,
-  type CreateUserRequest,
+  type CreateUser,
   type UserAuthResponse,
-  type UserLoginRequest,
+  type UserLogin,
 } from "types";
 import type { UserService } from "../users/user.service.js";
 import type { JWTService } from "./jwt.service.js";
@@ -29,7 +29,7 @@ export class AuthService {
    * signups at the same moment can't both succeed. A duplicate makes create() throw, and the
    * error handler answers 409.
    */
-  async register(data: CreateUserRequest): Promise<UserAuthResponse> {
+  async register(data: CreateUser): Promise<UserAuthResponse> {
     const hashedPassword = await bcrypt.hash(data.password, BCRYPT_ROUNDS);
 
     const user = await this.userService.create({
@@ -48,7 +48,7 @@ export class AuthService {
     };
   }
 
-  async login(data: UserLoginRequest): Promise<UserAuthResponse> {
+  async login(data: UserLogin): Promise<UserAuthResponse> {
     const user = await this.userService.findByEmail(data.email);
 
     // bcrypt.compare(plain text, stored hash): the order matters.

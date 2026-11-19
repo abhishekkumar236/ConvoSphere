@@ -1,8 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "db";
-import { BaseService, type PublicUser } from "types";
-
-type UserRow = typeof usersTable.$inferSelect;
+import { BaseService, type PublicUser, type User } from "types";
 
 export class UserService extends BaseService<typeof usersTable> {
   constructor() {
@@ -23,7 +21,7 @@ export class UserService extends BaseService<typeof usersTable> {
    * What may be sent to a client. Every response containing a user goes through here, so the
    * password hash never leaves the api. Copies named fields only (see PublicUser).
    */
-  toPublic(user: UserRow): PublicUser {
+  toPublic(user: User): PublicUser {
     return {
       id: user.id,
       username: user.username,
