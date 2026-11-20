@@ -1,11 +1,18 @@
-import { MqttClientWrapper } from "helpers";
+import { MqttClientWrapper, MqttTokenService } from "helpers";
+import { BaseCommandSchema } from "types";
 import { config } from "./config/index.js";
+import { EventFactory } from "./services/EventFactory.js";
+import { CommandGuard, CommandRejected } from "./services/CommandGuard.js";
 
 export class Service {
   private readonly mqtt: MqttClientWrapper;
+  private readonly guard: CommandGuard;
   private shuttingDown = false;
 
   constructor() {
+    // Verifies only (the api signs), so no expiry is needed here.
+    this.guard = new CommandGuard(new MqttTokenService(config.MQTT_TOKEN_SECRET));
+
     this.mqtt = MqttClientWrapper.initialize(config.MQTT_URL, {
       username: config.MQTT_USERNAME,
       password: config.MQTT_PASSWORD,
@@ -14,9 +21,6 @@ export class Service {
       reconnectPeriod: config.MQTT_RECONNECT_PERIOD,
       connectTimeout: config.MQTT_CONNECTION_TIMEOUT,
       keepalive: 60,
-      // Subscriptions are made in onConnectHandler on every connect (first and reconnects);
-      // mqtt.js re-sending them too would subscribe twice.
-      resubscribe: false,
     });
 
     this.registerListeners();
@@ -24,21 +28,48 @@ export class Service {
   }
 
   /**
-   * Starts the service. Subscribing waits for the broker: it happens in onConnectHandler,
-   * once connected, and again after every reconnect.
+   * Starts the service. Subscribes once: the wrapper re-sends subscriptions after every
+   * reconnect, and before the first connect it sends them as soon as the broker is reached.
    */
   public async init(): Promise<void> {
-    console.info("[SERVICE] Starting MQTT service, waiting for the broker...");
+    console.info("[SERVICE] Starting MQTT service...");
+
+    await this.mqtt.subscribe("rooms/+/events", this.onCommand, { qos: 1 });
+
+    console.info("[MQTT] Application subscriptions registered");
   }
+
+  /**
+   * One command message: JSON → checked against BaseCommandSchema → tokens checked by
+   * CommandGuard → its event handles it. Throwing is fine: the wrapper logs it and keeps going.
+   */
+  private onCommand = async (topic: string, payload: Buffer): Promise<void> => {
+    const parsed = BaseCommandSchema.safeParse(JSON.parse(payload.toString()));
+    if (!parsed.success) {
+      console.warn(`[MQTT] Ignored invalid command on "${topic}":`, parsed.error.issues);
+      return;
+    }
+
+    const command = parsed.data;
+    try {
+      this.guard.check(command);
+    } catch (error) {
+      if (error instanceof CommandRejected) {
+        // The claimed clientId, never the tokens.
+        console.warn(
+          `[MQTT] Rejected "${command.command}" claiming ${command.token.clientId} on "${topic}": ${error.message}`,
+        );
+        return;
+      }
+      throw error;
+    }
+
+    await EventFactory.create(command.command).process(command);
+  };
 
   private registerListeners(): void {
     this.mqtt.on("connect", () => {
       console.info("[MQTT] Connected successfully");
-      void this.onConnectHandler();
-    });
-
-    this.mqtt.on("message", (topic: string, payload: Buffer) => {
-      void this.onMessageHandler(topic, payload);
     });
 
     this.mqtt.on("reconnect", () => {
@@ -56,56 +87,6 @@ export class Service {
     this.mqtt.on("error", (error: Error) => {
       console.error("[MQTT] Connection error:", error.message);
     });
-  }
-
-  private async onConnectHandler(): Promise<void> {
-    if (this.shuttingDown) return;
-
-    try {
-      console.info("[MQTT] Restoring subscriptions...");
-
-      await this.initializeMqtt();
-
-      console.info("[SERVICE] MQTT initialization completed");
-    } catch (error) {
-      console.error("[SERVICE] MQTT initialization failed:", error);
-    }
-  }
-
-  private async initializeMqtt(): Promise<void> {
-    await this.registerMqttSubscriptions();
-  }
-
-  private async registerMqttSubscriptions(): Promise<void> {
-    await this.mqtt.subscribe("rooms/+/events", { qos: 1 });
-
-    console.info("[MQTT] Application subscriptions registered");
-  }
-
-  /**
-   * Handle incoming MQTT messages.
-   */
-  private async onMessageHandler(
-    topic: string,
-    payload: Buffer,
-  ): Promise<void> {
-    try {
-      const message = JSON.parse(payload.toString());
-
-      console.info("[MQTT] Message received:", {
-        topic,
-        message,
-      });
-
-      // Process your incoming request here.
-      await this.processMessage(topic, message);
-    } catch (error) {
-      console.error("[MQTT] Message processing failed:", error);
-    }
-  }
-
-  private async processMessage(topic: string, message: unknown): Promise<void> {
-    // Implement your business logic here.
   }
 
   private registerShutdownHandlers(): void {

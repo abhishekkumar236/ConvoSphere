@@ -1,11 +1,16 @@
 import { and, eq } from "drizzle-orm";
-import { db, roomMembersTable, roomTable } from "db";
+import { db, roomMembersTable, roomTable, usersTable } from "db";
 import {
   BadRequest,
+  ClientId,
   Forbidden,
   NotFound,
+  RedisKeyFactory,
   type CreateRoom,
+  type IRoomState,
+  type JoinResult,
   type LeaveResult,
+  type PublicUser,
   type Room,
   type RoomAccess,
   type RoomMember,
@@ -13,24 +18,38 @@ import {
 } from "types";
 import { BaseService } from "../../shared/base.service.js";
 import type { JoinPolicy } from "./join-policies.js";
+import { RedisClient, type MqttTokenService } from "helpers";
 
 /** Transaction handle, so private helpers can run inside the caller's transaction. */
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export class RoomService extends BaseService<typeof roomTable> {
   private joinPolicies: Record<RoomAccess, JoinPolicy>;
+  private mqttTokenService: MqttTokenService;
 
-  constructor(joinPolicies: Record<RoomAccess, JoinPolicy>) {
+  constructor(
+    joinPolicies: Record<RoomAccess, JoinPolicy>,
+    mqttTokenService: MqttTokenService,
+  ) {
     super(roomTable);
     this.joinPolicies = joinPolicies;
+    this.mqttTokenService = mqttTokenService;
+  }
+
+  /**
+   * Looked up on first use, not in the constructor: route files create this service when they
+   * are imported, which is before Service has called RedisClient.initialize().
+   */
+  private get redis(): RedisClient {
+    return RedisClient.getInstance();
   }
 
   /**
    * Creates the room and makes `hostId` its host, in one transaction: either both rows exist or
-   * neither does (no room without a host).
+   * neither does (no room without a host). After the commit, the room state goes to Redis.
    */
   async createRoom(hostId: number, data: CreateRoom): Promise<Room> {
-    return db.transaction(async (tx) => {
+    const { room, host } = await db.transaction(async (tx) => {
       const [room] = await tx
         .insert(roomTable)
         .values({ ...data, host_id: hostId })
@@ -41,8 +60,47 @@ export class RoomService extends BaseService<typeof roomTable> {
         .insert(roomMembersTable)
         .values({ room_id: room.id, user_id: hostId, role: "host" });
 
-      return room;
+      // Public fields only: this goes into Redis, never the password hash.
+      const [host] = await tx
+        .select({
+          id: usersTable.id,
+          username: usersTable.username,
+          email: usersTable.email,
+          created_at: usersTable.created_at,
+          updated_at: usersTable.updated_at,
+        })
+        .from(usersTable)
+        .where(eq(usersTable.id, hostId))
+        .limit(1);
+      if (!host) throw new Error(`Host ${hostId} not found`);
+
+      return { room, host };
     });
+
+    await this.cacheNewRoom(room, host);
+    return room;
+  }
+
+  /**
+   * Writes the new room to Redis as IRoomState, with the host as the first participant
+   * ("offline" until presence sees them connect). Runs after the commit, so Redis never holds a
+   * room Postgres doesn't. A failure is logged, not thrown: the room exists (Postgres is the
+   * truth), and an error here would make the client retry and create a duplicate room.
+   */
+  private async cacheNewRoom(room: Room, host: PublicUser): Promise<void> {
+    const state: IRoomState = {
+      ...room,
+      participants: { [String(host.id)]: { ...host, status: "online" } },
+    };
+
+    try {
+      await this.redis.set(RedisKeyFactory.room(String(room.id)), state);
+    } catch (error) {
+      console.error(
+        `Room ${room.id} created, but writing it to Redis failed:`,
+        error,
+      );
+    }
   }
 
   /**
@@ -52,9 +110,10 @@ export class RoomService extends BaseService<typeof roomTable> {
    *   3. already active → returned as is
    *   4. the room's JoinPolicy decides → 403 if not allowed
    *   5. earlier row (left) → reactivated; no row → inserted
+   * Returns the membership and a room token (for token.roomToken in this room's MQTT commands).
    */
-  async join(roomId: number, userId: number): Promise<RoomMember> {
-    return db.transaction(async (tx) => {
+  async join(roomId: number, userId: number): Promise<JoinResult> {
+    const membership = await db.transaction(async (tx) => {
       const room = await this.lockRoom(tx, roomId);
       const membership = await this.findMembership(tx, roomId, userId);
 
@@ -70,7 +129,12 @@ export class RoomService extends BaseService<typeof roomTable> {
       if (membership) {
         const [rejoined] = await tx
           .update(roomMembersTable)
-          .set({ status: "active", role: "member", joined_at: new Date(), left_at: null })
+          .set({
+            status: "active",
+            role: "member",
+            joined_at: new Date(),
+            left_at: null,
+          })
           .where(eq(roomMembersTable.id, membership.id))
           .returning();
         if (!rejoined) throw new Error("Rejoin returned no row");
@@ -84,6 +148,10 @@ export class RoomService extends BaseService<typeof roomTable> {
       if (!created) throw new Error("Insert into room_members returned no row");
       return created;
     });
+
+    // Signed after the commit: only an active member ever gets a token for this room.
+    const roomToken = this.mqttTokenService.signRoom(ClientId.fromUserId(userId), roomId);
+    return { membership, roomToken };
   }
 
   /**
@@ -108,14 +176,14 @@ export class RoomService extends BaseService<typeof roomTable> {
           throw new BadRequest("Only the host can name a new host");
         }
         await this.markLeft(tx, membership.id);
-        return { outcome: "left" };
+        return { outcome: "left", discardRoomToken: true };
       }
 
       // The host.
       if (newHostId === undefined) {
         // room_members (and anything else pointing at the room) cascades.
         await tx.delete(roomTable).where(eq(roomTable.id, roomId));
-        return { outcome: "room_deleted" };
+        return { outcome: "room_deleted", discardRoomToken: true };
       }
       if (newHostId === userId) {
         throw new BadRequest("You are already the host");
@@ -123,7 +191,9 @@ export class RoomService extends BaseService<typeof roomTable> {
 
       const successor = await this.findMembership(tx, roomId, newHostId);
       if (successor?.status !== "active") {
-        throw new BadRequest("The new host must be an active member of this room");
+        throw new BadRequest(
+          "The new host must be an active member of this room",
+        );
       }
 
       // Order matters: "one active host per room" is checked after every statement, so the old
@@ -138,7 +208,7 @@ export class RoomService extends BaseService<typeof roomTable> {
         .set({ host_id: newHostId })
         .where(eq(roomTable.id, roomId));
 
-      return { outcome: "host_transferred", newHostId };
+      return { outcome: "host_transferred", newHostId, discardRoomToken: true };
     });
   }
 
@@ -152,14 +222,21 @@ export class RoomService extends BaseService<typeof roomTable> {
     hostId: number,
     changes: UpdateRoom,
   ): Promise<Room | null> {
-    const isRoomOfHost = and(eq(roomTable.id, id), eq(roomTable.host_id, hostId));
+    const isRoomOfHost = and(
+      eq(roomTable.id, id),
+      eq(roomTable.host_id, hostId),
+    );
     const fields = Object.fromEntries(
       Object.entries(changes).filter(([, value]) => value !== undefined),
     );
 
     // Nothing to change: still answer as host-only, so a non-host can't probe with {}.
     if (Object.keys(fields).length === 0) {
-      const [room] = await db.select().from(roomTable).where(isRoomOfHost).limit(1);
+      const [room] = await db
+        .select()
+        .from(roomTable)
+        .where(isRoomOfHost)
+        .limit(1);
       return room ?? null;
     }
 

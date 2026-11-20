@@ -32,8 +32,21 @@ export type Room = typeof roomTable.$inferSelect;
 export type RoomAccess = Room["access"];
 export type RoomMember = typeof roomMembersTable.$inferSelect;
 
-/** What POST /rooms/:id/leave did. */
-export type LeaveResult =
+/**
+ * POST /rooms/:id/join. roomToken goes into token.session of every command for this room.
+ * Calling join again (already a member) returns a fresh one: that's how a client renews it.
+ */
+export interface JoinResult {
+  membership: RoomMember;
+  roomToken: string;
+}
+
+/**
+ * What POST /rooms/:id/leave did. discardRoomToken: the client should forget its room token for
+ * this room (it stays valid until it expires; revoking it server-side comes later).
+ */
+export type LeaveResult = { discardRoomToken: true } & (
   | { outcome: "left" }
   | { outcome: "host_transferred"; newHostId: number }
-  | { outcome: "room_deleted" };
+  | { outcome: "room_deleted" }
+);

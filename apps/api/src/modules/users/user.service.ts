@@ -1,12 +1,22 @@
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "db";
-import { Forbidden, type PublicUser, type User } from "types";
+import {
+  ClientId,
+  Forbidden,
+  RedisKeyFactory,
+  type HandshakeResponse,
+  type PublicUser,
+  type User,
+} from "types";
 import { BaseService } from "../../shared/base.service.js";
-import { RedisClient } from "helpers";
+import { RedisClient, type MqttTokenService } from "helpers";
 
 export class UserService extends BaseService<typeof usersTable> {
-  constructor() {
+  private mqttTokenService: MqttTokenService;
+
+  constructor(mqttTokenService: MqttTokenService) {
     super(usersTable);
+    this.mqttTokenService = mqttTokenService;
   }
 
   /**
@@ -27,15 +37,24 @@ export class UserService extends BaseService<typeof usersTable> {
     return user ?? null;
   }
 
-  async handshake(id: number) {
+  /**
+   * MQTT credentials for the logged-in user: their client id ("user-<id>") and a signed session
+   * token as the password. The token is stored nowhere; a new handshake issues a new one (older
+   * ones stay valid until they expire, revoking them comes later).
+   */
+  async handshake(id: number): Promise<HandshakeResponse> {
     const user = await this.findById(id);
     if (!user) {
       throw new Forbidden("User not found");
     }
 
-    await this.redis.set(`user:${id}`, this.toPublic(user));
+    await this.redis.set(RedisKeyFactory.User(String(id)), this.toPublic(user));
+
+    const clientId = ClientId.fromUserId(user.id);
     return {
-      mqttUsername: String(id),
+      clientId,
+      mqttUsername: clientId,
+      mqttPassword: this.mqttTokenService.signSession(clientId),
     };
   }
 

@@ -41,3 +41,13 @@ export interface UserAuthResponse {
   user: PublicUser;
   access_token: string;
 }
+
+/**
+ * POST /users/handshake. The client connects to MQTT with clientId + mqttUsername +
+ * mqttPassword, and sends mqttPassword as token.password in every command.
+ */
+export interface HandshakeResponse {
+  clientId: string;
+  mqttUsername: string;
+  mqttPassword: string;
+}

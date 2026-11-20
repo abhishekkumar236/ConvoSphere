@@ -70,9 +70,10 @@ export class UserController extends BaseController {
     return id;
   }
 
+  // The user comes from the login token, never from the URL: you can only get your own credentials.
   handshake = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = this.parseId(req);
+      const id = this.currentUser(req).id;
       const result = await this.userService.handshake(id);
 
       return this.sendResponse(res, result);
