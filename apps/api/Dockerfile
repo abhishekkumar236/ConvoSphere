@@ -18,7 +18,7 @@ RUN npm install --global turbo@2.11.11
 COPY . .
 
 # Writes /app/out with only the api, the workspace packages it imports (db, types) and a
-# lockfile trimmed to their dependencies. Other apps (media-service ...) are left out, so
+# lockfile trimmed to their dependencies. Other apps (room-service ...) are left out, so
 # changing them never rebuilds this image. Files ignored by Git (.env) are not copied.
 #   out/json = only the package.json files + package-lock.json  (enough to install)
 #   out/full = the full source code

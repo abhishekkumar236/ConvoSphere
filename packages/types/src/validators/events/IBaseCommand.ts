@@ -2,6 +2,9 @@ import { z } from "zod";
 import { CommandTypeSchema } from "./Commands.js";
 
 export const BaseCommandSchema = z.object({
+  // A new UUID per command, made by the app. A retry of the same command keeps the same id:
+  // replies carry it, and it's what makes processing effectively once.
+  commandId: z.uuid(),
   token: z.object({
     // "user-<id>", as given by the handshake.
     clientId: z.string().regex(/^user-[1-9]\d*$/, "clientId must look like user-<id>"),

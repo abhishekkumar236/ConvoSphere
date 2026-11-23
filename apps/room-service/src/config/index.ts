@@ -1,8 +1,8 @@
 import "dotenv/config";
-import { MediaServiceConfigSchema, type MediaServiceConfig } from "types";
+import { RoomServiceConfigSchema, type RoomServiceConfig } from "types";
 
-function loadConfig(): MediaServiceConfig {
-  const config = MediaServiceConfigSchema.safeParse(process.env);
+function loadConfig(): RoomServiceConfig {
+  const config = RoomServiceConfigSchema.safeParse(process.env);
   if (!config.success) {
     // Names each bad key and why, never the value (values can be secrets):
     // "Invalid config: SERVICE_NAME: Invalid input: expected string, received undefined"
