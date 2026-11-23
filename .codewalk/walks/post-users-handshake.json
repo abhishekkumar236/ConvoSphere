@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "id": "post-users-handshake",
+  "title": "POST /api/v1/users/handshake",
+  "mode": "explain",
+  "createdAt": "2026-11-23T07:06:10.017Z",
+  "codeRevision": "7996343",
+  "language": "typescript",
+  "trigger": {
+    "kind": "http",
+    "method": "POST",
+    "path": "/api/v1/users/handshake",
+    "input": { "source": "sample", "value": null }
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "responsibility": "router",
+      "file": "apps/api/src/Service.ts",
+      "line": 39,
+      "endLine": 39,
+      "anchor": "this.app.use(\"/api/v1\", routes);",
+      "title": "Global middleware, then /api/v1 mount",
+      "caption": "The request has no body, only the header \"Authorization: Bearer <jwt>\". The global urlencoded, json and cors middleware run first and do nothing useful here (req.body stays {}). Express strips /api/v1 and passes /users/handshake to the module router, which tries userRoutes first.",
+      "data": { "source": "sample", "values": { "req.headers.authorization": "Bearer <jwt>", "req.body": {}, "pathInsideRouter": "/users/handshake" } },
+      "next": "s2"
+    },
+    {
+      "id": "s2",
+      "responsibility": "router",
+      "file": "apps/api/src/modules/users/user.routes.ts",
+      "line": 17,
+      "endLine": 17,
+      "anchor": "router.post(\"/users/handshake\", authenticate, controller.handshake);",
+      "title": "Route matched",
+      "caption": "POST /users/handshake runs authenticate, then UserController.handshake. There is no validate() step: the route reads nothing from the body or URL, and the user id comes only from the login token.",
+      "next": "s3"
+    },
+    {
+      "id": "s3",
+      "responsibility": "middleware",
+      "file": "apps/api/src/middlewares/auth.middleware.ts",
+      "line": 23,
+      "endLine": 24,
+      "anchor": "const [scheme, token] = req.headers.authorization?.split(\" \") ?? [];",
+      "title": "Bearer token read from header",
+      "caption": "\"Bearer <jwt>\" is split into the scheme \"Bearer\" and the token. A missing header or any other scheme stops the request here.",
+      "data": { "source": "sample", "values": { "scheme": "Bearer", "token": "<jwt>" } },
+      "next": "s4",
+      "branches": [{ "when": "no Authorization header, or scheme is not \"Bearer\"", "goTo": "f1" }]
+    },
+    {
+      "id": "s4",
+      "responsibility": "middleware",
+      "file": "apps/api/src/middlewares/auth.middleware.ts",
+      "line": 28,
+      "endLine": 29,
+      "anchor": "req.user = this.jwtService.verify(token);",
+      "title": "Login token verified, user attached",
+      "caption": "JWTService.verify checks the HS256 signature with ACCESS_TOKEN_SECRET and the expiry (jsonwebtoken does this), then checks the payload shape with AccessTokenPayloadSchema. The token belongs to user 42, so req.user = { id: 42, email: \"ada@example.com\" }.",
+      "data": { "source": "sample", "values": { "req.user": { "id": 42, "email": "ada@example.com" } } },
+      "next": "s5",
+      "branches": [
+        { "when": "bad signature, expired or malformed token", "goTo": "f2" },
+        { "when": "token is valid but its payload has no positive integer id or valid email", "goTo": "f3" }
+      ]
+    },
+    {
+      "id": "s5",
+      "responsibility": "controller",
+      "file": "apps/api/src/modules/users/user.controller.ts",
+      "line": 76,
+      "endLine": 77,
+      "anchor": "const id = this.currentUser(req).id;",
+      "title": "Controller takes id from token",
+      "caption": "The id is 42 from req.user, never from the URL or body, so a caller can only get their own MQTT credentials. Any error thrown below is caught and passed to next(), which sends it to the error handler.",
+      "data": { "source": "sample", "values": { "id": 42 } },
+      "next": "s6"
+    },
+    {
+      "id": "s6",
+      "responsibility": "data",
+      "file": "apps/api/src/modules/users/user.service.ts",
+      "line": 49,
+      "endLine": 52,
+      "anchor": "const user = await this.findById(id);",
+      "title": "User 42 loaded from Postgres",
+      "caption": "BaseService.findById runs SELECT * FROM users WHERE id = 42 LIMIT 1 (Drizzle). The row exists. The login token is stateless, so this is the only place a deleted account is noticed.",
+      "data": { "source": "sample", "values": { "user": { "id": 42, "username": "ada", "email": "ada@example.com", "password": "<bcrypt hash>", "created_at": "2026-10-01T09:00:00.000Z", "updated_at": "2026-10-01T09:00:00.000Z" } } },
+      "next": "s7",
+      "branches": [
+        { "when": "no user with id 42 (account deleted after login)", "goTo": "f4" },
+        { "when": "Postgres query fails", "goTo": "f5" }
+      ]
+    },
+    {
+      "id": "s7",
+      "responsibility": "data",
+      "file": "apps/api/src/modules/users/user.service.ts",
+      "line": 70,
+      "endLine": 74,
+      "anchor": ".select({ roomId: roomMembersTable.room_id })",
+      "title": "Active room memberships loaded",
+      "caption": "activeRoomIds(42) reads room_members where user_id = 42 and status = 'active'. Ada is an active member of rooms 7 and 12; rows with status 'left' are skipped.",
+      "data": { "source": "sample", "values": { "rows": [{ "roomId": 7 }, { "roomId": 12 }], "returned": [7, 12] } },
+      "next": "s8",
+      "branches": [{ "when": "Postgres query fails", "goTo": "f5" }]
+    },
+    {
+      "id": "s8",
+      "responsibility": "data",
+      "file": "apps/api/src/modules/users/user.service.ts",
+      "line": 54,
+      "endLine": 55,
+      "anchor": "await this.redis.set(RedisKeyFactory.User(String(id)), state);",
+      "title": "user:42 written to Redis",
+      "caption": "toPublic drops the password hash. The public fields plus rooms [7, 12] are saved as JSON under user:42 with no expiry, replacing the whole value. room-service reads this key to allow enter-room without Postgres. A join that commits between s7 and this write is lost from the copy. Joining again or a new handshake repairs it.",
+      "data": { "source": "sample", "values": { "redisKey": "user:42", "state": { "id": 42, "username": "ada", "email": "ada@example.com", "created_at": "2026-10-01T09:00:00.000Z", "updated_at": "2026-10-01T09:00:00.000Z", "rooms": [7, 12] } } },
+      "next": "s9",
+      "branches": [{ "when": "Redis write fails", "goTo": "f5" }]
+    },
+    {
+      "id": "s9",
+      "responsibility": "service",
+      "file": "apps/api/src/modules/users/user.service.ts",
+      "line": 57,
+      "endLine": 57,
+      "anchor": "const clientId = ClientId.fromUserId(user.id);",
+      "title": "MQTT client id built",
+      "caption": "User 42 becomes the MQTT client id \"user-42\". ClientId is the only place that knows this format. Later, room-service turns \"user-42\" back into 42.",
+      "data": { "source": "sample", "values": { "clientId": "user-42" } },
+      "next": "s10"
+    },
+    {
+      "id": "s10",
+      "responsibility": "service",
+      "file": "packages/helpers/src/mqtt/MqttTokenService.ts",
+      "line": 52,
+      "endLine": 56,
+      "anchor": "return jwt.sign(payload, this.secret, {",
+      "title": "Session token signed",
+      "caption": "signSession(\"user-42\") signs an HS256 JWT with MQTT_TOKEN_SECRET: sub \"user-42\", aud \"mqtt-session\", a random jti, and an expiry of MQTT_TOKEN_EXPIRY seconds. It is not stored anywhere. Older tokens stay valid until they expire.",
+      "data": { "source": "sample", "values": { "tokenPayload": { "sub": "user-42", "aud": "mqtt-session", "jti": "<uuid>", "iat": "<now>", "exp": "<now + MQTT_TOKEN_EXPIRY>" }, "mqttPassword": "<mqtt session jwt>" } },
+      "next": "s11"
+    },
+    {
+      "id": "s11",
+      "responsibility": "service",
+      "file": "apps/api/src/modules/users/user.service.ts",
+      "line": 58,
+      "endLine": 62,
+      "anchor": "mqttUsername: clientId,",
+      "title": "Credentials assembled",
+      "caption": "The client id doubles as the MQTT username, and the session token is the MQTT password.",
+      "data": { "source": "sample", "values": { "result": { "clientId": "user-42", "mqttUsername": "user-42", "mqttPassword": "<mqtt session jwt>" } } },
+      "next": "s12"
+    },
+    {
+      "id": "s12",
+      "responsibility": "response",
+      "file": "apps/api/src/shared/base.controller.ts",
+      "line": 6,
+      "endLine": 9,
+      "anchor": "return res.status(status).json({",
+      "title": "200 with MQTT credentials",
+      "caption": "Sends 200 { success: true, data: { clientId, mqttUsername, mqttPassword } }. The client then connects to the broker with these. The broker's login check (/auth/mqtt/user) currently answers \"allow\" to everyone; the password is really checked on every command by room-service's CommandGuard."
+    },
+    {
+      "id": "f1",
+      "responsibility": "error",
+      "file": "apps/api/src/middlewares/auth.middleware.ts",
+      "line": 25,
+      "endLine": 25,
+      "anchor": "throw new Unauthorized(\"Missing access token\");",
+      "title": "401: no Bearer token",
+      "caption": "No header, or something like \"Basic ...\", returns 401 { success: false, message: \"Missing access token\", status: 401 } from the error handler. The controller never runs."
+    },
+    {
+      "id": "f2",
+      "responsibility": "error",
+      "file": "apps/api/src/modules/auth/jwt.service.ts",
+      "line": 38,
+      "endLine": 38,
+      "anchor": "throw new Unauthorized(\"Invalid or expired token\");",
+      "title": "401: token invalid or expired",
+      "caption": "A tampered, expired or garbled token returns 401 \"Invalid or expired token\". The message doesn't say which, on purpose. An MQTT session token also fails here because it is signed with a different secret."
+    },
+    {
+      "id": "f3",
+      "responsibility": "error",
+      "file": "apps/api/src/modules/auth/jwt.service.ts",
+      "line": 42,
+      "endLine": 43,
+      "anchor": "throw new Unauthorized(\"Invalid or expired token\");",
+      "title": "401: payload has wrong shape",
+      "caption": "A correctly signed token whose payload lacks a positive integer id or a valid email gets the same 401 \"Invalid or expired token\"."
+    },
+    {
+      "id": "f4",
+      "responsibility": "error",
+      "file": "apps/api/src/modules/users/user.service.ts",
+      "line": 51,
+      "endLine": 51,
+      "anchor": "throw new Forbidden(\"User not found\");",
+      "title": "403: account no longer exists",
+      "caption": "If user 42 was deleted while their login token is still valid, the response is 403 \"User not found\" (not 401 or 404). Nothing is written to Redis and no MQTT token is issued."
+    },
+    {
+      "id": "f5",
+      "responsibility": "error",
+      "file": "apps/api/src/middlewares/errorHandler.middleware.ts",
+      "line": 80,
+      "endLine": 82,
+      "anchor": "return send(res, 500, \"Internal Server Error\");",
+      "title": "500: Postgres or Redis failure",
+      "caption": "A database or Redis error is not an AppError, so the error handler logs it and returns 500 \"Internal Server Error\". No token is issued, because signing happens only after the Redis write."
+    }
+  ],
+  "outcome": {
+    "kind": "response",
+    "status": 200,
+    "body": {
+      "source": "sample",
+      "value": { "success": true, "data": { "clientId": "user-42", "mqttUsername": "user-42", "mqttPassword": "<mqtt session jwt>" } }
+    }
+  }
+}

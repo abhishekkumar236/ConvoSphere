@@ -33,12 +33,11 @@ export type RoomAccess = Room["access"];
 export type RoomMember = typeof roomMembersTable.$inferSelect;
 
 /**
- * POST /rooms/:id/join. roomToken goes into token.session of every command for this room.
- * Calling join again (already a member) returns a fresh one: that's how a client renews it.
+ * POST /rooms/:id/join: the membership only. The room token comes from the MQTT enter-room
+ * command, sent each time the room is opened.
  */
 export interface JoinResult {
   membership: RoomMember;
-  roomToken: string;
 }
 
 /**

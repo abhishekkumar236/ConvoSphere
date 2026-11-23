@@ -11,7 +11,7 @@ export const BaseCommandSchema = z.object({
     // The handshake's mqttPassword: a signed session token, checked on every command.
     password: z.string().min(1),
     // Room commands only (see ROOM_COMMANDS): the room, and in session the room token from
-    // POST /rooms/:id/join.
+    // the enter-room reply.
     roomId: z.string().optional(),
     session: z.string().optional(),
   }),

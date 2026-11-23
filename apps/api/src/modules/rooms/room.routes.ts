@@ -5,11 +5,10 @@ import { CreateRoomSchema, LeaveRoomSchema, UpdateRoomSchema } from "types";
 import { RoomController } from "./room.controller.js";
 import { RoomService } from "./room.service.js";
 import { joinPolicies } from "./join-policies.js";
-import { mqttTokenService } from "../auth/mqtt-token.js";
 
 const router = Router();
 
-const roomService = new RoomService(joinPolicies, mqttTokenService);
+const roomService = new RoomService(joinPolicies);
 const roomController = new RoomController(roomService);
 
 router.post(

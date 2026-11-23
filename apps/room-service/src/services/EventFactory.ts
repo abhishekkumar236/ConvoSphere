@@ -1,14 +1,16 @@
 import type { CommandType } from "types";
 import type { IEvent } from "./IEvent.js";
-import { EnterRoom } from "./room/EnterRoom.js";
 import { PermanentError } from "../errors.js";
 
+/** The handler for each command. Handlers are built once, with their dependencies, in Service. */
 export class EventFactory {
-  private static readonly events: Record<string, () => IEvent> = {
-    "enter-room": () => new EnterRoom(),
-  };
+  private readonly events: Partial<Record<CommandType, IEvent>>;
 
-  public static create(command: CommandType): IEvent {
+  constructor(events: Partial<Record<CommandType, IEvent>>) {
+    this.events = events;
+  }
+
+  public create(command: CommandType): IEvent {
     const event = this.events[command];
 
     if (!event) {
@@ -16,6 +18,6 @@ export class EventFactory {
       throw new PermanentError("NOT_SUPPORTED", `No handler registered for: ${command}`);
     }
 
-    return event();
+    return event;
   }
 }

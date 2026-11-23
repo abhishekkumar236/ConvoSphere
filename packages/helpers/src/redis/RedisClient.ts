@@ -15,10 +15,27 @@ export class RedisClient extends EventEmitter {
   private static instance: RedisClient;
   private client: Redis;
 
+  /** Longest wait for one Redis reply. Then the call throws, and the caller retries or fails. */
+  private static readonly COMMAND_TIMEOUT_MS = 1000;
+
   private constructor(url: string) {
     super();
 
-    this.client = new Redis(url);
+    // Fail fast, never late (room-service plan step 3). ioredis's defaults park commands while Redis is away and
+    // send them when it returns: a request waited 151 s, and a write landed after its room was
+    // deleted. Now:
+    //   not connected → the call throws at once (no offline queue)
+    //   no reply in 1 s → the call throws
+    //   connection lost mid-command → the call throws; it is not re-sent after reconnecting
+    // A command Redis already received can still run after the caller gave up (a timeout can't
+    // take it back), so writes should be safe to repeat.
+    // Reconnecting itself goes on in the background (default retryStrategy).
+    this.client = new Redis(url, {
+      commandTimeout: RedisClient.COMMAND_TIMEOUT_MS,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 0,
+      autoResendUnfulfilledCommands: false,
+    });
 
     this.client.on("connect", () => {
       this.emit("connect");
@@ -59,6 +76,15 @@ export class RedisClient extends EventEmitter {
     }
 
     return RedisClient.instance;
+  }
+
+  /**
+   * Resolves once Redis accepts commands. Without an offline queue, a command sent before that
+   * fails, so a service awaits this before taking work.
+   */
+  public async ready(): Promise<void> {
+    if (this.client.status === "ready") return;
+    await new Promise<void>((resolve) => this.client.once("ready", () => resolve()));
   }
 
   // SET. Every value is stored as JSON, strings too ("123" is stored as "\"123\""), so get()
@@ -109,6 +135,94 @@ export class RedisClient extends EventEmitter {
     );
 
     return result === 1 ? "OK" : null;
+  }
+
+  /**
+   * Overwrites the given top-level fields of the JSON value at `key`, keeping the others,
+   * atomically. false = the key doesn't exist (nothing is created). Keeps the TTL.
+   *   room:7 = {"id":7,"title":"Old","participants":{…}}  mergeJson("room:7", {title:"New"})
+   *   → {"id":7,"title":"New","participants":{…}}
+   * Not for values holding lists: Redis's cjson writes an empty list back as {}.
+   */
+  public async mergeJson(key: string, fields: Record<string, unknown>): Promise<boolean> {
+    const result = await this.client.eval(
+      `
+        local raw = redis.call("GET", KEYS[1])
+        if not raw then return 0 end
+        local value = cjson.decode(raw)
+        for name, field in pairs(cjson.decode(ARGV[1])) do value[name] = field end
+        redis.call("SET", KEYS[1], cjson.encode(value), "KEEPTTL")
+        return 1
+      `,
+      1,
+      key,
+      JSON.stringify(fields),
+    );
+
+    return result === 1;
+  }
+
+  /**
+   * Adds `item` to the number list `field` of the JSON value at `key`, atomically (one Lua
+   * script, so two changes at once can't overwrite each other). Already there → unchanged.
+   * false = the key doesn't exist (nothing is created). Keeps the TTL.
+   *   user:42 = {"id":42,"rooms":[7]}  addToJsonList("user:42", "rooms", 9) → {"id":42,"rooms":[7,9]}
+   */
+  public async addToJsonList(key: string, field: string, item: number): Promise<boolean> {
+    return this.changeJsonList(key, field, item, "add");
+  }
+
+  /** The opposite of addToJsonList. Not in the list → unchanged. false = the key doesn't exist. */
+  public async removeFromJsonList(key: string, field: string, item: number): Promise<boolean> {
+    return this.changeJsonList(key, field, item, "remove");
+  }
+
+  private async changeJsonList(
+    key: string,
+    field: string,
+    item: number,
+    change: "add" | "remove",
+  ): Promise<boolean> {
+    // The field name is put into a Lua string pattern below; letters and _ only keeps that safe.
+    if (!/^[A-Za-z_]+$/.test(field)) {
+      throw new Error(`Invalid JSON list field name: ${field}`);
+    }
+    // Redis's cjson encodes an empty Lua table as {} (proven on Redis 8, and it has no switch
+    // for it), so an emptied list is written back as [] by hand.
+    const result = await this.client.eval(
+      `
+        local raw = redis.call("GET", KEYS[1])
+        if not raw then return 0 end
+        local value = cjson.decode(raw)
+        local field, item, change = ARGV[1], tonumber(ARGV[2]), ARGV[3]
+        local list = value[field]
+        if type(list) ~= "table" then list = {} end
+        local out, found = {}, false
+        for _, existing in ipairs(list) do
+          if existing == item then
+            found = true
+            if change == "add" then table.insert(out, existing) end
+          else
+            table.insert(out, existing)
+          end
+        end
+        if change == "add" and not found then table.insert(out, item) end
+        value[field] = out
+        local encoded = cjson.encode(value)
+        if #out == 0 then
+          encoded = string.gsub(encoded, '"' .. field .. '":{}', '"' .. field .. '":[]', 1)
+        end
+        redis.call("SET", KEYS[1], encoded, "KEEPTTL")
+        return 1
+      `,
+      1,
+      key,
+      field,
+      String(item),
+      change,
+    );
+
+    return result === 1;
   }
 
   // DELETE

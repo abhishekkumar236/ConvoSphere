@@ -13,8 +13,8 @@ export class CommandRejected extends Error {
  * Checks that a command really comes from who it claims, before any handler runs:
  *   1. token.password is a valid session token (the handshake's mqttPassword) issued to
  *      token.clientId
- *   2. room commands (ROOM_COMMANDS): token.session is a valid room token (from POST
- *      /rooms/:id/join) issued to the same client for token.roomId
+ *   2. room commands (ROOM_COMMANDS): token.session is a valid room token (from the
+ *      enter-room reply) issued to the same client for token.roomId
  * Throws CommandRejected otherwise. Rejected commands are dropped and logged, never blocked
  * (until the broker verifies who is connected, a fake command could get someone else blocked).
  */

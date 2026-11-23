@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 /**
  * Signs and checks the two MQTT tokens (JWT, HMAC-SHA256 with MQTT_TOKEN_SECRET; stored nowhere):
  *   session: { sub: "user-1" }           issued by the handshake, sent in every command
- *   room:    { sub: "user-1", room: 7 }  issued by POST /rooms/:id/join, sent in room commands
+ *   room:    { sub: "user-1", room: 7 }  issued by enter-room (room-service), sent in room commands
  * Each kind has its own audience, so a session token can't pass as a room token (or the other
  * way round), and an api login token (other secret) passes as neither.
  * The content is readable (base64) but can't be changed or forged without the secret.

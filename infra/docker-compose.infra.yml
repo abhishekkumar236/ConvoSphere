@@ -9,8 +9,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: vmeet
-    ports:
-      - "5432:5432"
+    # No ports: only containers on the vmeet network reach it (postgres:5432). From the host:
+    #   docker exec -it postgres psql -U postgres -d vmeet
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -26,8 +26,7 @@ services:
 
   pgadmin:
     image: dpage/pgadmin4
-    ports:
-      - "8082:80"
+    # No port published (only gateways are). To use it for a while: ports ["127.0.0.1:8082:80"].
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
@@ -64,8 +63,7 @@ services:
     image: redis/redisinsight:latest
     container_name: redis-insight
     restart: unless-stopped
-    ports:
-      - "5542:5540"
+    # No port published (only gateways are). To use it for a while: ports ["127.0.0.1:5542:5540"].
     volumes:
       - redis_insight_data:/data
     depends_on:
@@ -99,8 +97,7 @@ services:
       - "15675:15675"
       # MQTT over TCP, for services and test tools (Postman, mosquitto_sub).
       - "1883:1883"
-      # AMQP, for services that use the AMQP protocol.
-      - "5672:5672"
+      # No AMQP port: services reach it inside Docker (rabbitmq:5672). Only gateways are published.
       # Management UI and API: bound to 127.0.0.1, so only this machine can open it,
       # never another computer on the network or the internet.
       - "127.0.0.1:15672:15672"

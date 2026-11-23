@@ -1,7 +1,8 @@
 import { hostname } from "node:os";
-import { AmqpClientWrapper, MqttTokenService } from "helpers";
+import { AmqpClientWrapper, MqttTokenService, RedisClient } from "helpers";
 import { config } from "./config/index.js";
 import { EventFactory } from "./services/EventFactory.js";
+import { EnterRoom } from "./services/room/EnterRoom.js";
 import { CommandGuard } from "./services/CommandGuard.js";
 import { CommandProcessor } from "./messaging/CommandProcessor.js";
 import { CommandReplies } from "./messaging/CommandReplies.js";
@@ -16,10 +17,12 @@ import {
 /**
  * room-service talks to RabbitMQ over AMQP only. Commands come from the shared quorum queue
  * (each to exactly one instance); replies and broadcasts are published to amq.topic, which
- * delivers them to the apps' MQTT subscriptions. See docs/room-service-plan.md.
+ * delivers them to the apps' MQTT subscriptions. Redis holds what it reads (user:{id},
+ * room:{id}). See docs/room-service-plan.md.
  */
 export class Service {
   private readonly amqp: AmqpClientWrapper;
+  private readonly redis: RedisClient;
   private readonly processor: CommandProcessor;
   /** Which instance handled what, in logs and in the RabbitMQ management UI. */
   private readonly instanceId = `${config.SERVICE_NAME}-${hostname()}-${process.pid}`;
@@ -30,12 +33,18 @@ export class Service {
       connectionName: this.instanceId,
     });
 
-    // Verifies only (the api signs), so no expiry is needed here.
-    const guard = new CommandGuard(new MqttTokenService(config.MQTT_TOKEN_SECRET));
+    this.redis = RedisClient.initialize(config.REDIS_URL);
+
+    // Verifies session tokens (the api signs them); signs and verifies room tokens (enter-room).
+    const tokens = new MqttTokenService(config.MQTT_TOKEN_SECRET, config.MQTT_TOKEN_EXPIRY);
+    const guard = new CommandGuard(tokens);
     const replies = new CommandReplies((exchange, routingKey, payload) =>
       this.amqp.publish(exchange, routingKey, payload),
     );
-    this.processor = new CommandProcessor(guard, replies, (command) => EventFactory.create(command));
+    const events = new EventFactory({
+      "enter-room": new EnterRoom(this.redis, tokens, config.MQTT_TOKEN_EXPIRY),
+    });
+    this.processor = new CommandProcessor(guard, replies, (command) => events.create(command));
 
     this.registerListeners();
     this.registerShutdownHandlers();
@@ -44,6 +53,8 @@ export class Service {
   public async init(): Promise<void> {
     console.info(`[SERVICE] Starting ${this.instanceId}...`);
 
+    // Redis fails fast (no offline queue), so commands are taken only once it's ready.
+    await this.redis.ready();
     await this.amqp.connect();
     await this.amqp.declare(roomServiceTopology);
     await this.amqp.consume(COMMANDS_QUEUE, this.processor.process, {
@@ -61,6 +72,8 @@ export class Service {
       console.info(`[AMQP] Reconnect attempt ${attempt} in ${delay}ms`),
     );
     this.amqp.on("error", (error: Error) => console.error("[AMQP] Error:", error.message));
+    this.redis.on("ready", () => console.info("[REDIS] Ready"));
+    this.redis.on("error", (error: Error) => console.error("[REDIS] Error:", error.message));
     // One line per failed delivery: where it goes next. Never the body (it carries tokens).
     this.amqp.on(
       "handler-failed",
@@ -83,7 +96,9 @@ export class Service {
     console.info("[SERVICE] Shutting down...");
 
     try {
+      // AMQP first: in-flight commands finish (they may still need Redis), then Redis closes.
       await this.amqp.disconnect();
+      await this.redis.disconnect();
       console.info("[SERVICE] Shutdown completed");
     } catch (error) {
       console.error("[SERVICE] Shutdown failed:", error);

@@ -38,12 +38,15 @@ export const ApiConfigSchema = ConfigSchema.pick({
 export type ApiConfig = z.infer<typeof ApiConfigSchema>;
 
 // room-service talks to RabbitMQ over AMQP only: commands come from a queue, and replies are
-// published to amq.topic, which delivers them to MQTT subscribers. MQTT_TOKEN_SECRET only
-// verifies the tokens inside commands.
+// published to amq.topic, which delivers them to MQTT subscribers. MQTT_TOKEN_SECRET verifies
+// session tokens and signs/verifies room tokens (enter-room); MQTT_TOKEN_EXPIRY = room token
+// lifetime. REDIS_URL: membership checks (user:{id}.rooms) and room data (room:{id}).
 export const RoomServiceConfigSchema = ConfigSchema.pick({
   SERVICE_NAME: true,
   MQTT_TOKEN_SECRET: true,
+  MQTT_TOKEN_EXPIRY: true,
   AMQP_URL: true,
+  REDIS_URL: true,
 });
 
 export type RoomServiceConfig = z.infer<typeof RoomServiceConfigSchema>;

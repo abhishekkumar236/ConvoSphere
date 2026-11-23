@@ -89,3 +89,24 @@ services:
       # The network defined in infra/docker-compose.infra.yml: reaches postgres and rabbitmq
       # by name, and RabbitMQ reaches this container as "api".
       - vmeet
+
+  # Processes room commands from the RabbitMQ queue room-service.commands (docs/room-service-plan.md).
+  room-service:
+    build:
+      context: .
+      dockerfile: apps/room-service/Dockerfile
+    image: vmeet/room-service
+    # No container_name: several copies can run side by side
+    # (docker compose up -d --scale room-service=3); RabbitMQ gives each command to one of them.
+    restart: always
+    init: true
+    env_file:
+      - apps/room-service/.env
+    # No ports: room-service listens on nothing. It reaches rabbitmq and redis by name on vmeet.
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vmeet
