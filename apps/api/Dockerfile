@@ -1,7 +1,7 @@
 # Image for the api. Build it from the REPO ROOT, because the api imports packages/db and
 # packages/types, and Docker can only copy files inside the build context:
 #   docker compose up -d --build api                         (uses the root docker-compose.yml)
-#   docker build -f apps/api/Dockerfile -t vmeet/api .       (same thing without compose)
+#   docker build -f apps/api/Dockerfile -t convosphere/api .       (same thing without compose)
 
 # =========================================================================================
 # Stage 1: prepare. Cut the monorepo down to what the api needs.

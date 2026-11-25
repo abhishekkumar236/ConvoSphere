@@ -1,7 +1,7 @@
 # Image for room-service. Build it from the REPO ROOT, because room-service imports
 # packages/helpers and packages/types:
 #   docker compose up -d --build room-service                       (root docker-compose.yml)
-#   docker build -f apps/room-service/Dockerfile -t vmeet/room-service .
+#   docker build -f apps/room-service/Dockerfile -t convosphere/room-service .
 # Same two stages as apps/api/Dockerfile; see the comments there for why each step is as it is.
 
 # Stage 1: cut the monorepo down to room-service and the workspace packages it imports.

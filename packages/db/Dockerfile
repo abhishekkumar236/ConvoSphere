@@ -1,7 +1,7 @@
 # Image for the "migrate" job: applies pending database migrations, then exits (src/migrate.ts).
 # Build it from the REPO ROOT, like every service:
 #   docker compose up migrate                                   (uses the root docker-compose.yml)
-#   docker build -f packages/db/Dockerfile -t vmeet/migrate .   (same thing without compose)
+#   docker build -f packages/db/Dockerfile -t convosphere/migrate .   (same thing without compose)
 #
 # The database is only reachable inside the Docker network, so migrations run from a container
 # on that network instead of from your machine.

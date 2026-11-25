@@ -1,4 +1,4 @@
-name: "vmeet"
+name: "convosphere"
 
 services:
   postgres:
@@ -8,21 +8,21 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: vmeet
-    # No ports: only containers on the vmeet network reach it (postgres:5432). From the host:
-    #   docker exec -it postgres psql -U postgres -d vmeet
+      POSTGRES_DB: convosphere
+    # No ports: only containers on the convosphere network reach it (postgres:5432). From the host:
+    #   docker exec -it postgres psql -U postgres -d convosphere
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      # Healthy once Postgres accepts connections to the vmeet database. The migrate job and the
+      # Healthy once Postgres accepts connections to the convosphere database. The migrate job and the
       # api wait for this, so they never start against a database that is still booting.
-      test: ["CMD-SHELL", "pg_isready -U postgres -d vmeet"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d convosphere"]
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 10s
     networks:
-      - vmeet
+      - convosphere
 
   pgadmin:
     image: dpage/pgadmin4
@@ -33,7 +33,7 @@ services:
     volumes:
       - pgadmin-data:/var/lib/pgadmin
     networks:
-      - vmeet
+      - convosphere
 
   redis:
     image: redis:8-alpine
@@ -57,7 +57,7 @@ services:
       timeout: 3s
       retries: 10
     networks:
-      - vmeet
+      - convosphere
 
   redis-insight:
     image: redis/redisinsight:latest
@@ -69,7 +69,7 @@ services:
     depends_on:
       - redis
     networks:
-      - vmeet
+      - convosphere
 
   # ---------------------------------------------------------------------------------
   # RabbitMQ: message broker. Apps connect with MQTT over WebSocket; services with
@@ -130,7 +130,7 @@ services:
       # RabbitMQ needs about 10-20 s to boot; failures during this time don't count.
       start_period: 30s
     networks:
-      - vmeet
+      - convosphere
 
 volumes:
   postgres_data:
@@ -141,8 +141,8 @@ volumes:
   rabbitmq_data:
 
 networks:
-  vmeet:
-    # Without "name", Docker calls this network "vmeet_vmeet" (project name + key).
-    # With it, the network is exactly "vmeet", so services in other compose files can join
-    # it as an external network named vmeet, and reach "rabbitmq" and "postgres" by name.
-    name: vmeet
+  convosphere:
+    # Without "name", Docker calls this network "convosphere_convosphere" (project name + key).
+    # With it, the network is exactly "convosphere", so services in other compose files can join
+    # it as an external network named convosphere, and reach "rabbitmq" and "postgres" by name.
+    name: convosphere
