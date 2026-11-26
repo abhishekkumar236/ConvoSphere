@@ -1,9 +1,7 @@
-import type { PublicUser, Room } from "../validators/index.js";
+import type { Room } from "../validators/index.js";
 
-export interface IUser extends PublicUser {
-  status: "online" | "offline";
-}
-
-export interface IRoomState extends Room {
-  participants: Record<string, IUser>;
-}
+/**
+ * room:{id} in Redis: the room's row. Who is in the room right now lives in its own hash,
+ * room:{id}:participants (ParticipantSchema), so enter/exit never rewrite this value.
+ */
+export type IRoomState = Room;

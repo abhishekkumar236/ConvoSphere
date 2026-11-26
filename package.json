@@ -1,5 +1,5 @@
 {
-  "name": "astro",
+  "name": "ConvoSphere",
   "private": true,
   "scripts": {
     "build": "turbo run build",

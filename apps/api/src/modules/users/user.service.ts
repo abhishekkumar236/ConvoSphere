@@ -51,7 +51,10 @@ export class UserService extends BaseService<typeof usersTable> {
       throw new Forbidden("User not found");
     }
 
-    const state: IUserState = { ...this.toPublic(user), rooms: await this.activeRoomIds(id) };
+    const state: IUserState = {
+      ...this.toPublic(user),
+      rooms: await this.activeRoomIds(id),
+    };
     await this.redis.set(RedisKeyFactory.User(String(id)), state);
 
     const clientId = ClientId.fromUserId(user.id);
@@ -70,7 +73,12 @@ export class UserService extends BaseService<typeof usersTable> {
     const rows = await db
       .select({ roomId: roomMembersTable.room_id })
       .from(roomMembersTable)
-      .where(and(eq(roomMembersTable.user_id, userId), eq(roomMembersTable.status, "active")));
+      .where(
+        and(
+          eq(roomMembersTable.user_id, userId),
+          eq(roomMembersTable.status, "active"),
+        ),
+      );
     return rows.map((row) => row.roomId);
   }
 

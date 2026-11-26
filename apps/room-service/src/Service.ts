@@ -3,9 +3,14 @@ import { AmqpClientWrapper, MqttTokenService, RedisClient } from "helpers";
 import { config } from "./config/index.js";
 import { EventFactory } from "./services/EventFactory.js";
 import { EnterRoom } from "./services/room/EnterRoom.js";
+import { ExitRoom } from "./services/room/ExitRoom.js";
+import { ChatStore } from "./services/chat/ChatStore.js";
+import { GetMessages } from "./services/chat/GetMessages.js";
+import { SendMessage } from "./services/chat/SendMessage.js";
 import { CommandGuard } from "./services/CommandGuard.js";
 import { CommandProcessor } from "./messaging/CommandProcessor.js";
 import { CommandReplies } from "./messaging/CommandReplies.js";
+import { RoomBroadcasts } from "./messaging/RoomBroadcasts.js";
 import {
   COMMANDS_PREFETCH,
   COMMANDS_QUEUE,
@@ -18,7 +23,8 @@ import {
  * room-service talks to RabbitMQ over AMQP only. Commands come from the shared quorum queue
  * (each to exactly one instance); replies and broadcasts are published to amq.topic, which
  * delivers them to the apps' MQTT subscriptions. Redis holds what it reads (user:{id},
- * room:{id}). See docs/room-service-plan.md.
+ * room:{id}), who is in each room (room:{id}:participants) and the rooms' chat for 48 h
+ * (room:{id}:messages). No Postgres. See docs/room-service-plan.md.
  */
 export class Service {
   private readonly amqp: AmqpClientWrapper;
@@ -36,15 +42,25 @@ export class Service {
     this.redis = RedisClient.initialize(config.REDIS_URL);
 
     // Verifies session tokens (the api signs them); signs and verifies room tokens (enter-room).
-    const tokens = new MqttTokenService(config.MQTT_TOKEN_SECRET, config.MQTT_TOKEN_EXPIRY);
-    const guard = new CommandGuard(tokens);
-    const replies = new CommandReplies((exchange, routingKey, payload) =>
-      this.amqp.publish(exchange, routingKey, payload),
+    const tokens = new MqttTokenService(
+      config.MQTT_TOKEN_SECRET,
+      config.MQTT_TOKEN_EXPIRY,
     );
+    const guard = new CommandGuard(tokens);
+    const publish = (exchange: string, routingKey: string, payload: object) =>
+      this.amqp.publish(exchange, routingKey, payload);
+    const replies = new CommandReplies(publish);
+    const broadcasts = new RoomBroadcasts(publish);
+    const chat = new ChatStore(this.redis);
     const events = new EventFactory({
-      "enter-room": new EnterRoom(this.redis, tokens, config.MQTT_TOKEN_EXPIRY),
+      "enter-room": new EnterRoom(this.redis, tokens, config.MQTT_TOKEN_EXPIRY, broadcasts),
+      "exit-room": new ExitRoom(this.redis, broadcasts),
+      "send-message": new SendMessage(chat, broadcasts),
+      "get-messages": new GetMessages(chat),
     });
-    this.processor = new CommandProcessor(guard, replies, (command) => events.create(command));
+    this.processor = new CommandProcessor(guard, replies, (command) =>
+      events.create(command),
+    );
 
     this.registerListeners();
     this.registerShutdownHandlers();
@@ -62,23 +78,41 @@ export class Service {
       retry: { exchange: RETRY_EXCHANGE, maxAttempts: MAX_ATTEMPTS },
     });
 
-    console.info(`[AMQP] Consuming ${COMMANDS_QUEUE} (prefetch ${COMMANDS_PREFETCH}, ${MAX_ATTEMPTS} attempts)`);
+    console.info(
+      `[AMQP] Consuming ${COMMANDS_QUEUE} (prefetch ${COMMANDS_PREFETCH}, ${MAX_ATTEMPTS} attempts)`,
+    );
   }
 
   private registerListeners(): void {
     this.amqp.on("connect", () => console.info("[AMQP] Connected"));
-    this.amqp.on("disconnect", (error: Error) => console.warn("[AMQP] Disconnected:", error.message));
-    this.amqp.on("reconnect", ({ attempt, delay }: { attempt: number; delay: number }) =>
-      console.info(`[AMQP] Reconnect attempt ${attempt} in ${delay}ms`),
+    this.amqp.on("disconnect", (error: Error) =>
+      console.warn("[AMQP] Disconnected:", error.message),
     );
-    this.amqp.on("error", (error: Error) => console.error("[AMQP] Error:", error.message));
+    this.amqp.on(
+      "reconnect",
+      ({ attempt, delay }: { attempt: number; delay: number }) =>
+        console.info(`[AMQP] Reconnect attempt ${attempt} in ${delay}ms`),
+    );
+    this.amqp.on("error", (error: Error) =>
+      console.error("[AMQP] Error:", error.message),
+    );
     this.redis.on("ready", () => console.info("[REDIS] Ready"));
-    this.redis.on("error", (error: Error) => console.error("[REDIS] Error:", error.message));
+    this.redis.on("error", (error: Error) =>
+      console.error("[REDIS] Error:", error.message),
+    );
     // One line per failed delivery: where it goes next. Never the body (it carries tokens).
     this.amqp.on(
       "handler-failed",
-      ({ message, outcome }: { message: { routingKey: string; attempt: number }; outcome: string }) =>
-        console.warn(`[AMQP] ${message.routingKey} attempt ${message.attempt} failed → ${outcome}`),
+      ({
+        message,
+        outcome,
+      }: {
+        message: { routingKey: string; attempt: number };
+        outcome: string;
+      }) =>
+        console.warn(
+          `[AMQP] ${message.routingKey} attempt ${message.attempt} failed → ${outcome}`,
+        ),
     );
   }
 

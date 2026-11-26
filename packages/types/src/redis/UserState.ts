@@ -14,8 +14,21 @@ export interface IUserState extends PublicUser {
 /** The part of user:{id} room-service reads. Other fields are dropped. */
 export const UserStateSchema = z.object({
   id: z.number().int().positive(),
+  username: z.string(),
   rooms: z.array(z.number().int().positive()),
 });
+
+/**
+ * One value of the hash room:{id}:participants (field = user id). Written once on enter-room
+ * (HSETNX), so a repeat keeps the first enteredAt; removed on exit-room or leave.
+ *   room:7:participants  "42" → {"username":"asha","enteredAt":"2026-11-25T10:00:00.000Z"}
+ */
+export const ParticipantSchema = z.object({
+  username: z.string(),
+  enteredAt: z.iso.datetime(),
+});
+
+export type IParticipantState = z.infer<typeof ParticipantSchema>;
 
 const ROOM_ACCESS = ["open", "invite_only"] as const satisfies readonly RoomAccess[];
 

@@ -140,8 +140,8 @@ export class RedisClient extends EventEmitter {
   /**
    * Overwrites the given top-level fields of the JSON value at `key`, keeping the others,
    * atomically. false = the key doesn't exist (nothing is created). Keeps the TTL.
-   *   room:7 = {"id":7,"title":"Old","participants":{…}}  mergeJson("room:7", {title:"New"})
-   *   → {"id":7,"title":"New","participants":{…}}
+   *   room:7 = {"id":7,"title":"Old","host_id":42}  mergeJson("room:7", {title:"New"})
+   *   → {"id":7,"title":"New","host_id":42}
    * Not for values holding lists: Redis's cjson writes an empty list back as {}.
    */
   public async mergeJson(key: string, fields: Record<string, unknown>): Promise<boolean> {
@@ -225,9 +225,68 @@ export class RedisClient extends EventEmitter {
     return result === 1;
   }
 
-  // DELETE
-  public async delete(key: string): Promise<number> {
-    return this.client.del(key);
+  /**
+   * HSETNX: sets `field` of the hash `key` to `value` (as JSON) only if the field isn't there,
+   * and only while `requiredKey` exists, in one step (a Lua script). Safe to repeat.
+   *   "added"   = it wasn't there, now it is
+   *   "kept"    = already there; the stored value wins, `value` is ignored
+   *   "missing" = `requiredKey` doesn't exist; nothing written
+   *   setFieldIfAbsent("room:7:participants", "42", {...}, "room:7")
+   * requiredKey stops a write for something deleted a moment earlier (room:7 deleted between
+   * the caller's check and this call) from creating a hash nobody will ever delete.
+   */
+  public async setFieldIfAbsent(
+    key: string,
+    field: string,
+    value: unknown,
+    requiredKey: string,
+  ): Promise<"added" | "kept" | "missing"> {
+    const result = await this.client.eval(
+      `
+        if redis.call("EXISTS", KEYS[2]) == 0 then return -1 end
+        return redis.call("HSETNX", KEYS[1], ARGV[1], ARGV[2])
+      `,
+      2,
+      key,
+      requiredKey,
+      field,
+      JSON.stringify(value),
+    );
+
+    if (result === -1) return "missing";
+    return result === 1 ? "added" : "kept";
+  }
+
+  /** HDEL. false = the field (or the hash) wasn't there. */
+  public async deleteField(key: string, field: string): Promise<boolean> {
+    return (await this.client.hdel(key, field)) === 1;
+  }
+
+  /**
+   * HGETALL. Each value is JSON, checked with `schema` like get(). {} when the hash doesn't exist.
+   *   getAllFields("room:7:participants", ParticipantSchema) → { "42": {...}, "43": {...} }
+   */
+  public async getAllFields<T>(key: string, schema: Parser<T>): Promise<Record<string, T>> {
+    const raw = await this.client.hgetall(key);
+
+    return Object.fromEntries(
+      Object.entries(raw).map(([field, value]) => [field, schema.parse(JSON.parse(value))]),
+    );
+  }
+
+  /**
+   * Runs a Lua script atomically (EVAL): nothing else runs in Redis until it ends. For logic
+   * that belongs to one service (e.g. room-service's chat), so it stays in that service.
+   * The reply is unknown: the caller checks its shape.
+   *   runScript('return redis.call("GET", KEYS[1])', ["room:7"], [])
+   */
+  public async runScript(script: string, keys: string[], args: string[]): Promise<unknown> {
+    return this.client.eval(script, keys.length, ...keys, ...args);
+  }
+
+  // DELETE: one call for several keys. Returns how many existed.
+  public async delete(...keys: string[]): Promise<number> {
+    return this.client.del(...keys);
   }
 
   // EXISTS

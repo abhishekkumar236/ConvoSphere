@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { db, roomMembersTable, roomTable, usersTable } from "db";
+import { db, roomMembersTable, roomTable } from "db";
 import {
   BadRequest,
   Forbidden,
@@ -9,7 +9,6 @@ import {
   type IRoomState,
   type JoinResult,
   type LeaveResult,
-  type PublicUser,
   type Room,
   type RoomAccess,
   type RoomMember,
@@ -43,7 +42,7 @@ export class RoomService extends BaseService<typeof roomTable> {
    * neither does (no room without a host). After the commit, the room state goes to Redis.
    */
   async createRoom(hostId: number, data: CreateRoom): Promise<Room> {
-    const { room, host } = await db.transaction(async (tx) => {
+    const room = await db.transaction(async (tx) => {
       const [room] = await tx
         .insert(roomTable)
         .values({ ...data, host_id: hostId })
@@ -54,41 +53,28 @@ export class RoomService extends BaseService<typeof roomTable> {
         .insert(roomMembersTable)
         .values({ room_id: room.id, user_id: hostId, role: "host" });
 
-      // Public fields only: this goes into Redis, never the password hash.
-      const [host] = await tx
-        .select({
-          id: usersTable.id,
-          username: usersTable.username,
-          email: usersTable.email,
-          created_at: usersTable.created_at,
-          updated_at: usersTable.updated_at,
-        })
-        .from(usersTable)
-        .where(eq(usersTable.id, hostId))
-        .limit(1);
-      if (!host) throw new Error(`Host ${hostId} not found`);
-
-      return { room, host };
+      return room;
     });
 
-    await this.cacheNewRoom(room, host);
+    await this.cacheNewRoom(room);
     await this.afterCommit(room.id, "add the room to the host's rooms", () =>
-      this.redis.addToJsonList(RedisKeyFactory.User(String(hostId)), "rooms", room.id),
+      this.redis.addToJsonList(
+        RedisKeyFactory.User(String(hostId)),
+        "rooms",
+        room.id,
+      ),
     );
     return room;
   }
 
   /**
-   * Writes the new room to Redis as IRoomState, with the host as the first participant
-   * ("offline" until presence sees them connect). Runs after the commit, so Redis never holds a
+   * Writes the new room to Redis as IRoomState. Nobody is in it until someone sends enter-room
+   * (room-service keeps room:{id}:participants). Runs after the commit, so Redis never holds a
    * room Postgres doesn't. A failure is logged, not thrown: the room exists (Postgres is the
    * truth), and an error here would make the client retry and create a duplicate room.
    */
-  private async cacheNewRoom(room: Room, host: PublicUser): Promise<void> {
-    const state: IRoomState = {
-      ...room,
-      participants: { [String(host.id)]: { ...host, status: "online" } },
-    };
+  private async cacheNewRoom(room: Room): Promise<void> {
+    const state: IRoomState = room;
 
     try {
       await this.redis.set(RedisKeyFactory.room(String(room.id)), state);
@@ -148,8 +134,15 @@ export class RoomService extends BaseService<typeof roomTable> {
       return created;
     });
 
-    await this.afterCommit(roomId, `add the room to user ${userId}'s rooms`, () =>
-      this.redis.addToJsonList(RedisKeyFactory.User(String(userId)), "rooms", roomId),
+    await this.afterCommit(
+      roomId,
+      `add the room to user ${userId}'s rooms`,
+      () =>
+        this.redis.addToJsonList(
+          RedisKeyFactory.User(String(userId)),
+          "rooms",
+          roomId,
+        ),
     );
     return { membership };
   }
@@ -158,8 +151,9 @@ export class RoomService extends BaseService<typeof roomTable> {
    * Member: status → left (the row stays, so rejoining is an update).
    * Host with newHostId: hands the room over, then leaves. Host without: deletes the room.
    * 404 when the room doesn't exist or the user isn't an active member of it.
-   * After the commit, Redis follows: the room leaves user:{id}.rooms; room:{id} gets the new
-   * host, or is deleted with the room.
+   * After the commit, Redis follows: the room leaves user:{id}.rooms; the user leaves
+   * room:{id}:participants; room:{id} gets the new host, or is deleted with its participants.
+   * Nobody in the room is told (the api has no broker connection; TD-20).
    */
   async leave(
     roomId: number,
@@ -213,17 +207,36 @@ export class RoomService extends BaseService<typeof roomTable> {
       return { outcome: "host_transferred", newHostId, discardRoomToken: true };
     });
 
-    await this.afterCommit(roomId, `remove the room from user ${userId}'s rooms`, () =>
-      this.redis.removeFromJsonList(RedisKeyFactory.User(String(userId)), "rooms", roomId),
+    await this.afterCommit(
+      roomId,
+      `remove the room from user ${userId}'s rooms`,
+      () =>
+        this.redis.removeFromJsonList(
+          RedisKeyFactory.User(String(userId)),
+          "rooms",
+          roomId,
+        ),
     );
     if (result.outcome === "room_deleted") {
       await this.afterCommit(roomId, "delete the room", () =>
-        this.redis.delete(RedisKeyFactory.room(String(roomId))),
+        this.deleteRoomState(roomId),
+      );
+    } else {
+      await this.afterCommit(
+        roomId,
+        `remove user ${userId} from the participants`,
+        () =>
+          this.redis.deleteField(
+            RedisKeyFactory.roomParticipants(String(roomId)),
+            String(userId),
+          ),
       );
     }
     if (result.outcome === "host_transferred") {
       await this.afterCommit(roomId, "set the new host", () =>
-        this.redis.mergeJson(RedisKeyFactory.room(String(roomId)), { host_id: result.newHostId }),
+        this.redis.mergeJson(RedisKeyFactory.room(String(roomId)), {
+          host_id: result.newHostId,
+        }),
       );
     }
     return result;
@@ -288,9 +301,21 @@ export class RoomService extends BaseService<typeof roomTable> {
 
     // Members' user:{id}.rooms keep the id; enter-room also needs room:{id}, so this is enough.
     await this.afterCommit(id, "delete the room", () =>
-      this.redis.delete(RedisKeyFactory.room(String(id))),
+      this.deleteRoomState(id),
     );
     return true;
+  }
+
+  /**
+   * room:{id}, its participants and its chat, in one call. Chat duplicate-check keys
+   * (chat:cmd:…) are left to expire (48 h).
+   */
+  private async deleteRoomState(roomId: number): Promise<void> {
+    await this.redis.delete(
+      RedisKeyFactory.room(String(roomId)),
+      RedisKeyFactory.roomParticipants(String(roomId)),
+      RedisKeyFactory.roomMessages(String(roomId)),
+    );
   }
 
   /**
@@ -306,7 +331,10 @@ export class RoomService extends BaseService<typeof roomTable> {
     try {
       await write();
     } catch (error) {
-      console.error(`Room ${roomId}: committed, but Redis failed to ${what}:`, error);
+      console.error(
+        `Room ${roomId}: committed, but Redis failed to ${what}:`,
+        error,
+      );
     }
   }
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { BaseCommandSchema } from "./IBaseCommand.js";
 import type { RoomAccess } from "../api/rooms.validator.js";
+import type { Participant } from "./RoomEvents.js";
 
 export const JoinCommandSchema = BaseCommandSchema.extend({
   command: z.literal("enter-room"),
@@ -29,4 +30,6 @@ export interface EnterRoomResult {
   membership: { role: "host" | "member" };
   /** MQTT topics to subscribe to while in the room. */
   topics: { events: string };
+  /** Who is in the room now, the sender included, oldest first. Later changes come as RoomEvents. */
+  participants: Participant[];
 }
